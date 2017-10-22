@@ -196,9 +196,13 @@ class resnetv1(Network):
                                   weights_initializer=initializer,
                                   padding='VALID', activation_fn=None, scope='rpn_cls_score')
       # change it so that the score has 2 as its channel size
-      rpn_cls_score_reshape = self._reshape_layer(rpn_cls_score, 2, 'rpn_cls_score_reshape')
-      rpn_cls_prob_reshape = self._softmax_layer(rpn_cls_score_reshape, "rpn_cls_prob_reshape")
-      rpn_cls_prob = self._reshape_layer(rpn_cls_prob_reshape, self._num_anchors * 2, "rpn_cls_prob")
+      # rpn_cls_score_reshape = self._reshape_layer(rpn_cls_score, 2, 'rpn_cls_score_reshape')
+      # rpn_cls_prob_reshape = self._softmax_layer(rpn_cls_score_reshape, "rpn_cls_prob_reshape")
+      # rpn_cls_prob = self._reshape_layer(rpn_cls_prob_reshape, self._num_anchors * 2, "rpn_cls_prob")
+      rpn_cls_score_shape = tf.shape(rpn_cls_score)
+      rpn_cls_score_reshape = tf.reshape(rpn_cls_score, shape=[rpn_cls_score_shape[0], rpn_cls_score_shape[1],
+                                                               rpn_cls_score_shape[2]*self._num_anchors, 2])
+      rpn_cls_prob = tf.nn.softmax(rpn_cls_score_reshape)
       rpn_bbox_pred = slim.conv2d(rpn, self._num_anchors * 4, [1, 1], trainable=is_training,
                                   weights_initializer=initializer_bbox,
                                   padding='VALID', activation_fn=None, scope='rpn_bbox_pred')
@@ -227,13 +231,11 @@ class resnetv1(Network):
       rfcn_net_classes = slim.conv2d(rfcn_net, cfg.K*cfg.K*(20+1), [1, 1], weights_initializer=tf.random_normal_initializer(stddev=0.01),
                              weights_regularizer=slim.l2_regularizer(scale=0.0005), scope='refined_classes',
                              activation_fn=None)
-      rfcn_net_bbox = slim.conv2d(rfcn_net, cfg.K*cfg.K*4*20, [1, 1], weights_regularizer=slim.l2_regularizer(scale=0.0005),
+      rfcn_net_bbox = slim.conv2d(rfcn_net, cfg.K*cfg.K*4*21, [1, 1], weights_regularizer=slim.l2_regularizer(scale=0.0005),
                                   weights_initializer=tf.random_normal_initializer(stddev=0.01), scope='refined_bbox',
                                   activation_fn=None)
 
       box_ind, bbox = self._normalize_bbox(net_conv4, rois, name='rois2bbox')
-      print('---'*20)
-      print(bbox)
       # rfcn pooling layer
       position_sensitive_boxes = []
       ymin, xmin, ymax, xmax = tf.unstack(bbox, axis=1)
@@ -266,8 +268,6 @@ class resnetv1(Network):
           bbox_target_crops.append(crop)
       position_sensitive_bbox_feature = tf.add_n(bbox_target_crops)/len(bbox_target_crops)
       position_sensitive_bbox_feature = tf.reduce_mean(position_sensitive_bbox_feature, axis=[1, 2])
-      print('---'*20)
-      print(position_sensitive_bbox_feature)
 
     self._predictions["rpn_cls_score"] = rpn_cls_score
     self._predictions["rpn_cls_score_reshape"] = rpn_cls_score_reshape
