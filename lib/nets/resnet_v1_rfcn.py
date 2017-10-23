@@ -9,7 +9,6 @@ from __future__ import print_function
 
 import tensorflow as tf
 import tensorflow.contrib.slim as slim
-from tensorflow.contrib.slim import losses
 from tensorflow.contrib.slim import arg_scope
 from tensorflow.contrib.slim.python.slim.nets import resnet_utils
 from tensorflow.contrib.slim.python.slim.nets import resnet_v1
@@ -319,5 +318,6 @@ class resnetv1(Network):
           y1 = y1 / height
           x2 = x2 / width
           y2 = y2 / height
-          bboxs = tf.stack([y1, x1, y2, x2], axis=1)
-          return indexes, bboxs
+          # bboxs = tf.stack([y1, x1, y2, x2], axis=1)
+          bboxes = tf.stop_gradient(tf.stack([y1, x1, y2, x2], 1))
+          return indexes, bboxes
