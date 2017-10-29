@@ -172,7 +172,7 @@ class Vgg16():
                     vars.append(var)
         return vars
 
-    def merged_networks(self, origin_scope, target_scope):
+    def merged_networks_rpn2rfcn(self, origin_scope, target_scope):
         assign_ops = []
         for var in tf.trainable_variables():
             if (origin_scope in var.op.name) and ('rpn_layer' in var.op.name):
@@ -181,6 +181,25 @@ class Vgg16():
                         if var_target.op.name.replace(target_scope, origin_scope) == var.op.name:
                             assign_ops.append(tf.assign(var_target, var))
                             break
+        return assign_ops
+
+    def merged_networks_rfcn2rpn(self, origin_scope, target_scope):
+        assign_ops = []
+        for var in tf.trainable_variables():
+            if (origin_scope in var.op.name) and ('conv' in var.op.name):
+                for var_target in tf.trainable_variables():
+                    if target_scope in var_target.op.name:
+                        if var_target.op.name.replace(target_scope, origin_scope) == var.op.name:
+                            assign_ops.append(tf.assign(var_target, var))
+                            break
+            if (origin_scope in var.op.name) and ('rfcn_layer' in var.op.name):
+                for var_target in tf.trainable_variables():
+                    if target_scope in var_target.op.name:
+                        if var_target.op.name.replace(target_scope, origin_scope) == var.op.name:
+                            assign_ops.append(tf.assign(var_target, var))
+                            break
+
+
         return assign_ops
 
 
@@ -201,6 +220,10 @@ if __name__ == '__main__':
     vgg_rpn.loss()
     vgg_rpn.train_op_rpn('rpn_network')
     rpn_train_op = vgg_rpn.optimizer_rpn.apply_gradients(vgg_rpn.grpn)
+    vgg_rpn.train_op_rpn_stage3('rpn_network')
+    vgg_rpn.train_op_rfcn_stage4('rpn_network')
+    rpn_train_op_stage3 = vgg_rpn.optimizer_rpn_stage3.apply_gradients(vgg_rpn.grpn_stage3)
+    rpn_train_op_stage4 = vgg_rpn.optimizer_rfcn_stage4.apply_gradients(vgg_rpn.grfcn_stage4)
 
     # rfcn network
     with tf.variable_scope('rfcn_network'):
@@ -210,10 +233,6 @@ if __name__ == '__main__':
     vgg_rfcn.loss()
     vgg_rfcn.train_op_rfcn('rfcn_network')
     rfcn_train_op = vgg_rfcn.optimizer_rfcn.apply_gradients(vgg_rfcn.grfcn)
-    vgg_rfcn.train_op_rpn_stage3('rfcn_network')
-    vgg_rfcn.train_op_rfcn_stage4('rfcn_network')
-    rfcn_train_op_stage3 = vgg_rfcn.optimizer_rpn_stage3.apply_gradients(vgg_rfcn.grpn_stage3)
-    rfcn_train_op_stage4 = vgg_rfcn.optimizer_rfcn_stage4.apply_gradients(vgg_rfcn.grfcn_stage4)
 
     for key, val in vgg_rpn.grpn:
         print(key)
@@ -223,11 +242,11 @@ if __name__ == '__main__':
         print(key)
         print(val)
     print('###'*30)
-    for key, val in vgg_rfcn.grpn_stage3:
+    for key, val in vgg_rpn.grpn_stage3:
         print(key)
         print(val)
     print('###'*30)
-    for key, val in vgg_rfcn.grfcn_stage4:
+    for key, val in vgg_rpn.grfcn_stage4:
         print(key)
         print(val)
 
@@ -237,14 +256,14 @@ if __name__ == '__main__':
     merged_summary = tf.summary.merge_all()
     sess.run(tf.global_variables_initializer())
 
-    for i in range(100):
+    for i in range(30):
         inputs_val = np.random.normal(size=[1, 600, 1000, 3])
         intpus_val = inputs_val.astype(np.float32, copy=False)
         _, loss_rpn = sess.run([rpn_train_op, vgg_rpn.loss_rpn], feed_dict={vgg_rpn.inputs: inputs_val})
         print('step %d, loss of rpn layers %f' % (i, loss_rpn))
 
     print('====================================stage one finished=========================================')
-    for i in range(100):
+    for i in range(30):
         inputs_val = np.random.normal(size=[1, 600, 1000, 3])
         intpus_val = inputs_val.astype(np.float32, copy=False)
         inputs_val_rfcn = np.random.normal(size=[1, 600, 1000, 3])
@@ -254,8 +273,8 @@ if __name__ == '__main__':
         print('step %d, loss of rfcn layers %f' % (i, loss_rfcn))
     print('====================================stage two finished=========================================')
     # merged networks
-    merged_ops = vgg_rfcn.merged_networks('rpn_network', 'rfcn_network')
-
+    # merged_ops = vgg_rfcn.merged_networks_rpn2rfcn('rpn_network', 'rfcn_network')
+    merged_ops = vgg_rpn.merged_networks_rfcn2rpn('rfcn_network', 'rpn_network')
     # # test merged_ops works without error
     # with tf.variable_scope('rpn_network', reuse=True):
     #     rpn_head_weights = tf.get_variable('rpn_layer_head/weights')
@@ -272,65 +291,100 @@ if __name__ == '__main__':
     #         rfcn_scores_biases = tf.get_variable('rpn_layer_scores/biases')
     #         rfcn_bboxes_weights = tf.get_variable('rpn_layer_bboxes/weights')
     #         rfcn_bboxes_biases = tf.get_variable('rpn_layer_bboxes/biases')
+    #         conv1 = tf.get_variable('conv1/conv1_1/weights')
     #
-    #     rfcn_head_weights = tf.identity(rfcn_head_weights)
-    #     rfcn_head_biases = tf.identity(rfcn_head_biases)
-    #     rfcn_scores_weights = tf.identity(rfcn_scores_weights)
-    #     rfcn_scores_biases = tf.identity(rfcn_scores_biases)
-    #     rfcn_bboxes_weights = tf.identity(rfcn_bboxes_weights)
-    #     rfcn_bboxes_biases = tf.identity(rfcn_bboxes_biases)
-    #     with tf.control_dependencies([rfcn_head_weights, rfcn_head_biases, rfcn_scores_weights, rfcn_scores_biases,
-    #                                   rfcn_bboxes_weights, rfcn_bboxes_biases]):
-    #         mean_weights = tf.reduce_mean(rfcn_head_weights) * 2
-    #         mean_bias = tf.reduce_mean(rfcn_head_biases) * 2
+    #     # rfcn_head_weights = tf.identity(rfcn_head_weights)
+    #     # rfcn_head_biases = tf.identity(rfcn_head_biases)
+    #     # rfcn_scores_weights = tf.identity(rfcn_scores_weights)
+    #     # rfcn_scores_biases = tf.identity(rfcn_scores_biases)
+    #     # rfcn_bboxes_weights = tf.identity(rfcn_bboxes_weights)
+    #     # rfcn_bboxes_biases = tf.identity(rfcn_bboxes_biases)
     #
-    # # bool1 = tf.equal(rpn_head_biases, rfcn_head_biases)
-    # # bool2 = tf.equal(rpn_head_weights, rfcn_head_weights)
-    # # bool3 = tf.equal(rpn_scores_biases, rfcn_scores_biases)
-    # # bool4 = tf.equal(rpn_scores_weights, rfcn_scores_weights)
-    # # bool5 = tf.equal(rpn_bboxes_biases, rfcn_bboxes_biases)
-    # # bool6 = tf.equal(rpn_bboxes_weights, rfcn_bboxes_weights)
+    #     conv1 = tf.identity(conv1)
+    #     # with tf.control_dependencies([rfcn_head_weights, rfcn_head_biases, rfcn_scores_weights, rfcn_scores_biases,
+    #     #                               rfcn_bboxes_weights, rfcn_bboxes_biases]):
+    #     #     mean_weights = tf.reduce_mean(rfcn_head_weights) * 2
+    #     #     mean_bias = tf.reduce_mean(rfcn_head_biases) * 2
     #
-    # mean_weights_out = tf.reduce_mean(rpn_head_weights)
-    # mean_bias_out = tf.reduce_mean(rpn_head_biases)
+    # bool1 = tf.equal(rpn_head_biases, rfcn_head_biases)
+    # bool2 = tf.equal(rpn_head_weights, rfcn_head_weights)
+    # bool3 = tf.equal(rpn_scores_biases, rfcn_scores_biases)
+    # bool4 = tf.equal(rpn_scores_weights, rfcn_scores_weights)
+    # bool5 = tf.equal(rpn_bboxes_biases, rfcn_bboxes_biases)
+    # bool6 = tf.equal(rpn_bboxes_weights, rfcn_bboxes_weights)
+    #
+    # # mean_weights_out = tf.reduce_mean(rpn_head_weights)
+    # # mean_bias_out = tf.reduce_mean(rpn_head_biases)
     # #
-    # # bool_val1, bool_val2, bool_val3, bool_val4, bool_val5, bool_val6 = sess.run([bool1, bool2, bool3, bool4, bool5, bool6])
-    # # # print(bool_val1, bool_val2, bool_val3, bool_val4, bool_val5, bool_val6)
-    # # print(np.all(bool_val1), np.all(bool_val2), np.all(bool_val3), np.all(bool_val4), np.all(bool_val5), np.all(bool_val6))
+    # bool_val1, bool_val2, bool_val3, bool_val4, bool_val5, bool_val6 = sess.run([bool1, bool2, bool3, bool4, bool5, bool6])
+    # # # # print(bool_val1, bool_val2, bool_val3, bool_val4, bool_val5, bool_val6)
+    # print(np.all(bool_val1), np.all(bool_val2), np.all(bool_val3), np.all(bool_val4), np.all(bool_val5), np.all(bool_val6))
     # weights1, bias1, weights2, bias2 = sess.run([mean_weights, mean_bias, mean_weights_out, mean_bias_out])
     # print(weights1, bias1, weights2, bias2)
     # print(weights1/weights2, bias1/bias2)
-
+    # with tf.variable_scope('rfcn_network', reuse=True):
+    #     rfcn_conv11 = tf.get_variable('conv1/conv1_1/weights')
+    #     rfcn_conv12 = tf.get_variable('conv1/conv1_2/weights')
+    #     rfcn_conv21 = tf.get_variable('conv2/conv2_1/weights')
+    #     rfcn_conv22 = tf.get_variable('conv2/conv2_2/weights')
+    #     rfcn_conv31 = tf.get_variable('conv3/conv3_1/weights')
+    #     rfcn_conv32 = tf.get_variable('conv3/conv3_2/weights')
+    #     rfcn_conv33 = tf.get_variable('conv3/conv3_3/weights')
+    #     rfcn_conv41 = tf.get_variable('conv4/conv4_1/weights')
+    #     rfcn_conv42 = tf.get_variable('conv4/conv4_2/weights')
+    #     rfcn_conv43 = tf.get_variable('conv4/conv4_3/weights')
+    #     rfcn_conv51 = tf.get_variable('conv5/conv5_1/weights')
+    #     rfcn_conv52 = tf.get_variable('conv5/conv5_2/weights')
+    #     rfcn_conv53 = tf.get_variable('conv5/conv5_3/weights')
+    #     rfcn_layer_weights = tf.get_variable('rfcn_layer_head/weights')
+    #     rfcn_scores_weights = tf.get_variable('rfcn_layer_cls_scores/weights')
+    # rpn_conv12 = tf.get_variable('conv1/conv1_2/weights')
+    # rpn_conv21 = tf.get_variable('conv2/conv2_1/weights')
+    # rpn_conv22 = tf.get_variable('conv2/conv2_2/weights')
+    # rpn_conv31 = tf.get_variable('conv3/conv3_1/weights')
+    # rpn_conv32 = tf.get_variable('conv3/conv3_2/weights')
+    # rpn_layer_weights = tf.get_variable('rfcn_layer_head/weights')
+    # rpn_scores_weights = tf.get_variable('rfcn_layer_cls_scores/weights')
+    # bool1 = tf.equal(rfcn_conv11, rpn_conv11)
+    # bool2 = tf.equal(rfcn_conv12, rpn_conv12)
+    # bool3 = tf.equal(rfcn_conv21, rpn_conv21)
+    # bool4 = tf.equal(rfcn_conv22, rpn_conv22)
+    # # bool5 = tf.equal(rfcn_conv31, rpn_conv31)
+    # # bool6 = tf.equal(rfcn_conv32, rpn_conv32)
+    # bool5 = tf.equal(rfcn_layer_weights, rpn_layer_weights)
+    # bool6 = tf.equal(rfcn_scores_weights, rpn_scores_weights)
+    # bool_val1, bool_val2, bool_val3, bool_val4, bool_val5, bool_val6 = sess.run(
+    #     [bool1, bool2, bool3, bool4, bool5, bool6])
+    # print(bool_val1, bool_val2, bool_val3, bool_val4, bool_val5, bool_val6)
+    # print(np.all(bool_val1), np.all(bool_val2), np.all(bool_val3), np.all(bool_val4), np.all(bool_val5),
+    #       np.all(bool_val6))
+    # stage 3
     with tf.control_dependencies(merged_ops):
-        with tf.variable_scope('rfcn_network', reuse=True):
-            rfcn_head_weights = tf.get_variable('rpn_layer_head/weights')
-            rfcn_head_biases = tf.get_variable('rpn_layer_head/biases')
-            rfcn_scores_weights = tf.get_variable('rpn_layer_scores/weights')
-            rfcn_scores_biases = tf.get_variable('rpn_layer_scores/biases')
-            rfcn_bboxes_weights = tf.get_variable('rpn_layer_bboxes/weights')
-            rfcn_bboxes_biases = tf.get_variable('rpn_layer_bboxes/biases')
-        rfcn_head_weights = tf.identity(rfcn_head_weights)
-        rfcn_head_biases = tf.identity(rfcn_head_biases)
-        rfcn_scores_weights = tf.identity(rfcn_scores_weights)
-        rfcn_scores_biases = tf.identity(rfcn_scores_biases)
-        rfcn_bboxes_weights = tf.identity(rfcn_bboxes_weights)
-        rfcn_bboxes_biases = tf.identity(rfcn_bboxes_biases)
-        with tf.control_dependencies([rfcn_head_weights, rfcn_head_biases, rfcn_scores_weights, rfcn_scores_biases,
-                                      rfcn_bboxes_weights, rfcn_bboxes_biases]):
+        with tf.variable_scope('rpn_network', reuse=True):
+            rpn_conv11 = tf.get_variable('conv1/conv1_1/weights')
+        rpn_conv1 = tf.identity(rpn_conv11)
+        with tf.control_dependencies([rpn_conv1]):
             for i in range(100):
                 inputs_val_rfcn = np.random.normal(size=[1, 600, 1000, 3])
                 inputs_val_rfcn = inputs_val_rfcn.astype(np.float32, copy=False)
-                _, loss_rpn_val = sess.run([rfcn_train_op_stage3, vgg_rfcn.loss_rpn],
-                                                        feed_dict={vgg_rfcn.inputs: inputs_val_rfcn})
+                _, loss_rpn_val = sess.run([rpn_train_op_stage3, vgg_rpn.loss_rpn],
+                                                        feed_dict={vgg_rpn.inputs: inputs_val_rfcn})
                 print('step %d, loss value is %f' %(i, loss_rpn_val))
             print('====================================stage three finished=========================================')
-            for i in range(100):
-                inputs_val_rfcn = np.random.normal(size=[1, 600, 1000, 3])
-                inputs_val_rfcn = inputs_val_rfcn.astype(np.float32, copy=False)
-                _, loss_rpn_val = sess.run([rfcn_train_op_stage4, vgg_rfcn.loss_rfcn],
-                                                        feed_dict={vgg_rfcn.inputs: inputs_val_rfcn})
-                print('step %d, loss value is %f' % (i, loss_rpn_val))
-                print('====================================stage four finished=========================================')
+        for i in range(100):
+            inputs_val_rfcn = np.random.normal(size=[1, 600, 1000, 3])
+            inputs_val_rfcn = inputs_val_rfcn.astype(np.float32, copy=False)
+            _, loss_rpn_val = sess.run([rpn_train_op_stage4, vgg_rpn.loss_rfcn],
+                                                        feed_dict={vgg_rpn.inputs: inputs_val_rfcn})
+            print('step %d, loss value is %f' % (i, loss_rpn_val))
+        print('====================================stage four finished=========================================')
+        for i in range(100):
+            inputs_val_rfcn = np.random.normal(size=[1, 600, 1000, 3])
+            inputs_val_rfcn = inputs_val_rfcn.astype(np.float32, copy=False)
+            _, loss_rpn_val = sess.run([rpn_train_op_stage3, vgg_rpn.loss_rpn],
+                                       feed_dict={vgg_rpn.inputs: inputs_val_rfcn})
+            print('step %d, loss value is %f' % (i, loss_rpn_val))
+        print('====================================stage five finished=========================================')
     print('finished')
     # for i in range(300):
     #     pass
