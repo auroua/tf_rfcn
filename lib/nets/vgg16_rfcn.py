@@ -40,13 +40,13 @@ class Vgg16():
             self.vgg_head = net
 
     def build_rpn(self):
-        rpn_head = slim.conv2d(self.vgg_head, 512, [3, 3], scope='rpn_head')
-        rpn_anchor_scores = slim.conv2d(rpn_head, 18, [1, 1], scope='rpn_scores')
+        rpn_head = slim.conv2d(self.vgg_head, 512, [3, 3], scope='rpn_layer_head')
+        rpn_anchor_scores = slim.conv2d(rpn_head, 18, [1, 1], scope='rpn_layer_scores')
         rpn_anchor_scores_shape = self._get_shape(rpn_anchor_scores)
         rpn_anchor_scores = tf.reshape(rpn_anchor_scores, shape=[rpn_anchor_scores_shape[0]*rpn_anchor_scores_shape[1]*
                                        rpn_anchor_scores_shape[2]*9, 2])
         rpn_anchor_scores_pred = tf.nn.softmax(rpn_anchor_scores)
-        rpn_anchor_bboxes = slim.conv2d(self.vgg_head, 36, [1, 1], scope='rpn_bboxes')
+        rpn_anchor_bboxes = slim.conv2d(self.vgg_head, 36, [1, 1], scope='rpn_layer_bboxes')
         rpn_anchor_bboxes_shape = self._get_shape(rpn_anchor_bboxes)
         rpn_anchor_bboxes = tf.reshape(rpn_anchor_bboxes, shape=[rpn_anchor_bboxes_shape[0]*rpn_anchor_bboxes_shape[1]*
                                                                  rpn_anchor_bboxes_shape[2]*9, -1])
@@ -73,8 +73,8 @@ class Vgg16():
                 total_boxes.append(boxes)
 
         # rfcn conv_layer
-        rfcn_head = slim.conv2d(self.vgg_head, 512, [3, 3], scope='rfcn_head')
-        rfcn_cls_scores = slim.conv2d(rfcn_head, 9*21, [3, 3], scope='rfcn_cls_scores')
+        rfcn_head = slim.conv2d(self.vgg_head, 512, [3, 3], scope='rfcn_layer_head')
+        rfcn_cls_scores = slim.conv2d(rfcn_head, 9*21, [3, 3], scope='rfcn_layer_cls_scores')
         rfcn_scores_collections = tf.split(rfcn_cls_scores, 9, axis=3)
 
         rpn_crops = []
@@ -87,7 +87,7 @@ class Vgg16():
         rpn_scores = tf.reduce_mean(avg_crops, axis=[1, 2])
         rpn_pred = tf.nn.softmax(rpn_scores)
 
-        rfcn_bboxes = slim.conv2d(rfcn_head, 4*9, [1, 1], scope='rfcn_bboxes')
+        rfcn_bboxes = slim.conv2d(rfcn_head, 4*9, [1, 1], scope='rfcn_layer_bboxes')
         rfcn_bboxes_regions = tf.split(rfcn_bboxes, 9, axis=3)
         total_boxes_crops = []
         for bboxes, features in zip(total_boxes, rfcn_bboxes_regions):
@@ -119,14 +119,22 @@ class Vgg16():
         self.loss_rpn = loss_rpn
         self.loss_rfcn = loss_rfcn
 
-    def train_op(self, scope):
+    def train_op_rpn(self, scope):
         vars = self._filter_ops(scope=scope)
+        self.grpn = self.optimizer_rpn.compute_gradients(self.loss_rpn, vars)
+
+    def train_op_rfcn(self, scope):
+        vars = self._filter_ops(scope=scope)
+        self.grfcn = self.optimizer_rfcn.compute_gradients(self.loss_rfcn, vars)
+
+    def train_op_rpn_stage3(self, scope):
         stage3_vars = self._get_rpn_ops(scope=scope)
         print(stage3_vars)
-        stage4_vars = self._get_rfcn_ops(scope=scope)
-        self.grpn = self.optimizer_rpn.compute_gradients(self.loss_rpn, vars)
-        self.grfcn = self.optimizer_rfcn.compute_gradients(self.loss_rfcn, vars)
         self.grpn_stage3 = self.optimizer_rpn_stage3.compute_gradients(self.loss_rpn, stage3_vars)
+
+    def train_op_rfcn_stage4(self, scope):
+        stage4_vars = self._get_rfcn_ops(scope=scope)
+        print(stage4_vars)
         self.grfcn_stage4 = self.optimizer_rfcn_stage4.compute_gradients(self.loss_rfcn, stage4_vars)
 
     def _filter_ops(self, scope):
@@ -135,24 +143,45 @@ class Vgg16():
             if scope not in var.op.name:
                 continue
             vars.append(var)
-            # tf.summary.histogram(var.op.name, var)
+            tf.summary.histogram(var.op.name, var)
         return vars
 
     def _get_rpn_ops(self, scope):
         vars = []
         for var in tf.trainable_variables():
-            if (scope not in var.op.name) and ('rpn' not in var.op.name):
+            if scope not in var.op.name:
                 continue
-            vars.append(var)
+            else:
+                if 'rpn_layer' not in var.op.name:
+                    continue
+                else:
+                    vars.append(var)
         return vars
 
     def _get_rfcn_ops(self, scope):
         vars = []
         for var in tf.trainable_variables():
-            if (scope not in var.op.name) and ('rfcn' not in var.op.name):
+            if (scope not in var.op.name) and ('rfcn_layer' not in var.op.name):
                 continue
-            vars.append(var)
+            if scope not in var.op.name:
+                continue
+            else:
+                if 'rfcn_layer' not in var.op.name:
+                    continue
+                else:
+                    vars.append(var)
         return vars
+
+    def merged_networks(self, origin_scope, target_scope):
+        assign_ops = []
+        for var in tf.trainable_variables():
+            if (origin_scope in var.op.name) and ('rpn_layer' in var.op.name):
+                for var_target in tf.trainable_variables():
+                    if target_scope in var_target.op.name:
+                        if var_target.op.name.replace(target_scope, origin_scope) == var.op.name:
+                            assign_ops.append(tf.assign(var_target, var))
+                            break
+        return assign_ops
 
 
 if __name__ == '__main__':
@@ -170,7 +199,7 @@ if __name__ == '__main__':
     print(vgg_rpn.rfcn_bbox_scores.shape.as_list())
     print('==='*30)
     vgg_rpn.loss()
-    vgg_rpn.train_op('rpn_network')
+    vgg_rpn.train_op_rpn('rpn_network')
     rpn_train_op = vgg_rpn.optimizer_rpn.apply_gradients(vgg_rpn.grpn)
 
     # rfcn network
@@ -179,41 +208,43 @@ if __name__ == '__main__':
         vgg_rfcn.build_model()
         vgg_rfcn.build_rfcn(vgg_rpn.rpn_bboxes)
     vgg_rfcn.loss()
-    vgg_rfcn.train_op('rfcn_network')
+    vgg_rfcn.train_op_rfcn('rfcn_network')
     rfcn_train_op = vgg_rfcn.optimizer_rfcn.apply_gradients(vgg_rfcn.grfcn)
+    vgg_rfcn.train_op_rpn_stage3('rfcn_network')
+    vgg_rfcn.train_op_rfcn_stage4('rfcn_network')
+    rfcn_train_op_stage3 = vgg_rfcn.optimizer_rpn_stage3.apply_gradients(vgg_rfcn.grpn_stage3)
+    rfcn_train_op_stage4 = vgg_rfcn.optimizer_rfcn_stage4.apply_gradients(vgg_rfcn.grfcn_stage4)
 
-    # for key, val in vgg_rpn.grpn:
-    #     print(key)
-    #     print(val)
-    # print('###'*30)
-
-    for key, val in vgg_rpn.grpn_stage3:
+    for key, val in vgg_rpn.grpn:
         print(key)
         print(val)
-    print('###' * 30)
-    # for key, val in vgg_rpn.grfcn_stage4:
-    #     print(key)
-    #     print(val)
+    print('###'*30)
+    for key, val in vgg_rfcn.grfcn:
+        print(key)
+        print(val)
+    print('###'*30)
+    for key, val in vgg_rfcn.grpn_stage3:
+        print(key)
+        print(val)
+    print('###'*30)
+    for key, val in vgg_rfcn.grfcn_stage4:
+        print(key)
+        print(val)
 
     sess = tf.Session()
     saver = tf.train.Saver(max_to_keep=10000)
     summary_writer = tf.summary.FileWriter(logdir=output_path, graph=sess.graph)
     merged_summary = tf.summary.merge_all()
-
     sess.run(tf.global_variables_initializer())
-    with tf.variable_scope('rpn_network', reuse=True):
-        var = tf.get_variable('rpn_bboxes/weights')
 
-    for i in range(300):
+    for i in range(100):
         inputs_val = np.random.normal(size=[1, 600, 1000, 3])
         intpus_val = inputs_val.astype(np.float32, copy=False)
         _, loss_rpn = sess.run([rpn_train_op, vgg_rpn.loss_rpn], feed_dict={vgg_rpn.inputs: inputs_val})
-        # _, loss_rpn, summary_ops = sess.run([rpn_train_op, vgg_rpn.loss_rpn, merged_summary], feed_dict={vgg_rpn.inputs: inputs_val})
-        # summary_writer.add_summary(summary_ops, global_step=i)
         print('step %d, loss of rpn layers %f' % (i, loss_rpn))
 
     print('====================================stage one finished=========================================')
-    for i in range(300):
+    for i in range(100):
         inputs_val = np.random.normal(size=[1, 600, 1000, 3])
         intpus_val = inputs_val.astype(np.float32, copy=False)
         inputs_val_rfcn = np.random.normal(size=[1, 600, 1000, 3])
@@ -221,9 +252,85 @@ if __name__ == '__main__':
         _, loss_rfcn, summary_ops = sess.run([rfcn_train_op, vgg_rfcn.loss_rfcn, merged_summary], feed_dict={vgg_rfcn.inputs: inputs_val_rfcn, vgg_rpn.inputs: inputs_val})
         summary_writer.add_summary(summary_ops, global_step=i)
         print('step %d, loss of rfcn layers %f' % (i, loss_rfcn))
-    # print('====================================stage two finished=========================================')
+    print('====================================stage two finished=========================================')
+    # merged networks
+    merged_ops = vgg_rfcn.merged_networks('rpn_network', 'rfcn_network')
+
+    # # test merged_ops works without error
+    # with tf.variable_scope('rpn_network', reuse=True):
+    #     rpn_head_weights = tf.get_variable('rpn_layer_head/weights')
+    #     rpn_head_biases = tf.get_variable('rpn_layer_head/biases')
+    #     rpn_scores_weights = tf.get_variable('rpn_layer_scores/weights')
+    #     rpn_scores_biases = tf.get_variable('rpn_layer_scores/biases')
+    #     rpn_bboxes_weights = tf.get_variable('rpn_layer_bboxes/weights')
+    #     rpn_bboxes_biases = tf.get_variable('rpn_layer_bboxes/biases')
+    # with tf.control_dependencies(merged_ops):
+    #     with tf.variable_scope('rfcn_network', reuse=True):
+    #         rfcn_head_weights = tf.get_variable('rpn_layer_head/weights')
+    #         rfcn_head_biases = tf.get_variable('rpn_layer_head/biases')
+    #         rfcn_scores_weights = tf.get_variable('rpn_layer_scores/weights')
+    #         rfcn_scores_biases = tf.get_variable('rpn_layer_scores/biases')
+    #         rfcn_bboxes_weights = tf.get_variable('rpn_layer_bboxes/weights')
+    #         rfcn_bboxes_biases = tf.get_variable('rpn_layer_bboxes/biases')
+    #
+    #     rfcn_head_weights = tf.identity(rfcn_head_weights)
+    #     rfcn_head_biases = tf.identity(rfcn_head_biases)
+    #     rfcn_scores_weights = tf.identity(rfcn_scores_weights)
+    #     rfcn_scores_biases = tf.identity(rfcn_scores_biases)
+    #     rfcn_bboxes_weights = tf.identity(rfcn_bboxes_weights)
+    #     rfcn_bboxes_biases = tf.identity(rfcn_bboxes_biases)
+    #     with tf.control_dependencies([rfcn_head_weights, rfcn_head_biases, rfcn_scores_weights, rfcn_scores_biases,
+    #                                   rfcn_bboxes_weights, rfcn_bboxes_biases]):
+    #         mean_weights = tf.reduce_mean(rfcn_head_weights) * 2
+    #         mean_bias = tf.reduce_mean(rfcn_head_biases) * 2
+    #
+    # # bool1 = tf.equal(rpn_head_biases, rfcn_head_biases)
+    # # bool2 = tf.equal(rpn_head_weights, rfcn_head_weights)
+    # # bool3 = tf.equal(rpn_scores_biases, rfcn_scores_biases)
+    # # bool4 = tf.equal(rpn_scores_weights, rfcn_scores_weights)
+    # # bool5 = tf.equal(rpn_bboxes_biases, rfcn_bboxes_biases)
+    # # bool6 = tf.equal(rpn_bboxes_weights, rfcn_bboxes_weights)
+    #
+    # mean_weights_out = tf.reduce_mean(rpn_head_weights)
+    # mean_bias_out = tf.reduce_mean(rpn_head_biases)
+    # #
+    # # bool_val1, bool_val2, bool_val3, bool_val4, bool_val5, bool_val6 = sess.run([bool1, bool2, bool3, bool4, bool5, bool6])
+    # # # print(bool_val1, bool_val2, bool_val3, bool_val4, bool_val5, bool_val6)
+    # # print(np.all(bool_val1), np.all(bool_val2), np.all(bool_val3), np.all(bool_val4), np.all(bool_val5), np.all(bool_val6))
+    # weights1, bias1, weights2, bias2 = sess.run([mean_weights, mean_bias, mean_weights_out, mean_bias_out])
+    # print(weights1, bias1, weights2, bias2)
+    # print(weights1/weights2, bias1/bias2)
+
+    with tf.control_dependencies(merged_ops):
+        with tf.variable_scope('rfcn_network', reuse=True):
+            rfcn_head_weights = tf.get_variable('rpn_layer_head/weights')
+            rfcn_head_biases = tf.get_variable('rpn_layer_head/biases')
+            rfcn_scores_weights = tf.get_variable('rpn_layer_scores/weights')
+            rfcn_scores_biases = tf.get_variable('rpn_layer_scores/biases')
+            rfcn_bboxes_weights = tf.get_variable('rpn_layer_bboxes/weights')
+            rfcn_bboxes_biases = tf.get_variable('rpn_layer_bboxes/biases')
+        rfcn_head_weights = tf.identity(rfcn_head_weights)
+        rfcn_head_biases = tf.identity(rfcn_head_biases)
+        rfcn_scores_weights = tf.identity(rfcn_scores_weights)
+        rfcn_scores_biases = tf.identity(rfcn_scores_biases)
+        rfcn_bboxes_weights = tf.identity(rfcn_bboxes_weights)
+        rfcn_bboxes_biases = tf.identity(rfcn_bboxes_biases)
+        with tf.control_dependencies([rfcn_head_weights, rfcn_head_biases, rfcn_scores_weights, rfcn_scores_biases,
+                                      rfcn_bboxes_weights, rfcn_bboxes_biases]):
+            for i in range(100):
+                inputs_val_rfcn = np.random.normal(size=[1, 600, 1000, 3])
+                inputs_val_rfcn = inputs_val_rfcn.astype(np.float32, copy=False)
+                _, loss_rpn_val = sess.run([rfcn_train_op_stage3, vgg_rfcn.loss_rpn],
+                                                        feed_dict={vgg_rfcn.inputs: inputs_val_rfcn})
+                print('step %d, loss value is %f' %(i, loss_rpn_val))
+            print('====================================stage three finished=========================================')
+            for i in range(100):
+                inputs_val_rfcn = np.random.normal(size=[1, 600, 1000, 3])
+                inputs_val_rfcn = inputs_val_rfcn.astype(np.float32, copy=False)
+                _, loss_rpn_val = sess.run([rfcn_train_op_stage4, vgg_rfcn.loss_rfcn],
+                                                        feed_dict={vgg_rfcn.inputs: inputs_val_rfcn})
+                print('step %d, loss value is %f' % (i, loss_rpn_val))
+                print('====================================stage four finished=========================================')
+    print('finished')
     # for i in range(300):
     #     pass
-
-
-
