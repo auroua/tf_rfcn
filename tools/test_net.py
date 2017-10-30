@@ -17,7 +17,7 @@ import time, os, sys
 
 import tensorflow as tf
 from nets.vgg16 import vgg16
-from nets.resnet_v1_rfcn import resnetv1
+from nets.resnet_v1_rfcn_hole import resnetv1
 from nets.mobilenet_v1 import mobilenetv1
 
 def parse_args():
@@ -54,6 +54,7 @@ def parse_args():
 
   args = parser.parse_args()
   return args
+
 
 if __name__ == '__main__':
   args = parse_args()

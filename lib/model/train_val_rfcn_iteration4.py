@@ -28,9 +28,9 @@ class SolverWrapper(object):
   """
     A wrapper class for the training process
   """
-
-  def __init__(self, sess, network, imdb, roidb, valroidb, output_dir, tbdir, pretrained_model=None):
+  def __init__(self, sess, network, rfcn_network, imdb, roidb, valroidb, output_dir, tbdir, pretrained_model=None):
     self.net = network
+    self.rfcn_network = rfcn_network
     self.imdb = imdb
     self.roidb = roidb
     self.valroidb = valroidb
@@ -100,38 +100,75 @@ class SolverWrapper(object):
       # Set the random seed for tensorflow
       tf.set_random_seed(cfg.RNG_SEED)
       # Build the main computation graph
-      layers = self.net.create_architecture(sess, 'TRAIN', self.imdb.num_classes, tag='default',
+      rpn_layers = self.net.create_architecture(sess, 'TRAIN', self.imdb.num_classes, scope='rpn_network', tag='default',
                                             anchor_scales=cfg.ANCHOR_SCALES,
                                             anchor_ratios=cfg.ANCHOR_RATIOS)
+      rfcn_layers = self.rfcn_network.create_architecture(sess, 'TRAIN', self.imdb.num_classes, scope='rfcn_network', tag='default',
+                                            anchor_scales=cfg.ANCHOR_SCALES,
+                                            anchor_ratios=cfg.ANCHOR_RATIOS,
+                                            input_rois=rpn_layers['rois'],
+                                            roi_scores=rpn_layers['roi_scores'])
+
       # Define the loss
-      loss = layers['total_loss']
-      rpn_loss = layers['rpn_loss']
-      class_loss = layers['class_loss']
+      rpn_loss = rpn_layers['rpn_loss']
+      rfcn_loss = rfcn_layers['rfcn_loss']
+      rpn_rfcn_loss = rpn_layers['rfcn_loss']
       # Set learning rate and momentum
       lr = tf.Variable(cfg.TRAIN.LEARNING_RATE, trainable=False)
       momentum = cfg.TRAIN.MOMENTUM
       self.optimizer = tf.train.MomentumOptimizer(lr, momentum)
 
       # Compute the gradients wrt the loss
-      gvs = self.optimizer.compute_gradients(loss)
+      rpn_trainable_variables_stage1 = self.net.get_train_variables('rpn_network')
+      rfcn_trainable_variables_stage2 = self.rfcn_network.get_train_variables('rfcn_network')
+      rpn_trainable_variables_stage3 = self.net.get_train_variables_stage3('rpn_network')
+      rpn_trainable_variables_stage4 = self.net.get_train_variables_stage4('rpn_network')
+      gvs_rpn_stage1 = self.optimizer.compute_gradients(rpn_loss, rpn_trainable_variables_stage1)
+      gvs_rfcn_stage2 = self.optimizer.compute_gradients(rfcn_loss, rfcn_trainable_variables_stage2)
+      gvs_rpn_stage3 = self.optimizer.compute_gradients(rpn_loss, rpn_trainable_variables_stage3)
+      gvs_rfcn_stage4 = self.optimizer.compute_gradients(rpn_rfcn_loss, rpn_trainable_variables_stage4)
+
+
+      # print('####'*30)
+      # for key, val in gvs_rpn_stage1:
+      #   print(key)
+      #   print(val)
+      # print('@@@@'*30)
+      # for key, val in gvs_rfcn_stage2:
+      #   print(key)
+      #   print(val)
+      # print('@@@@' * 30)
+      # for key, val in gvs_rpn_stage3:
+      #   print(key)
+      #   print(val)
+      # print('@@@@' * 30)
+      # for key, val in gvs_rfcn_stage4:
+      #   print(key)
+      #   print(val)
+      # print('@@@@' * 30)
+      # print('####'*30)
+
 
       # Double the gradient of the bias if set
-      if cfg.TRAIN.DOUBLE_BIAS:
-        final_gvs = []
-        with tf.variable_scope('Gradient_Mult') as scope:
-          for grad, var in gvs:
-            scale = 1.
-            if cfg.TRAIN.DOUBLE_BIAS and '/biases:' in var.name:
-              scale *= 2.
-            if not np.allclose(scale, 1.0):
-              grad = tf.multiply(grad, scale)
-            final_gvs.append((grad, var))
-        train_op = self.optimizer.apply_gradients(final_gvs)
-      else:
-        train_op = self.optimizer.apply_gradients(gvs)
+      # if cfg.TRAIN.DOUBLE_BIAS:
+      #   final_gvs = []
+      #   with tf.variable_scope('Gradient_Mult') as scope:
+      #     for grad, var in gvs:
+      #       scale = 1.
+      #       if cfg.TRAIN.DOUBLE_BIAS and '/biases:' in var.name:
+      #         scale *= 2.
+      #       if not np.allclose(scale, 1.0):
+      #         grad = tf.multiply(grad, scale)
+      #       final_gvs.append((grad, var))
+      #   train_op = self.optimizer.apply_gradients(final_gvs)
+      # else:
+      train_op_stage1 = self.optimizer.apply_gradients(gvs_rpn_stage1)
+      train_op_stage2 = self.optimizer.apply_gradients(gvs_rfcn_stage2)
+      train_op_stage3 = self.optimizer.apply_gradients(gvs_rpn_stage3)
+      train_op_stage4 = self.optimizer.apply_gradients(gvs_rfcn_stage4)
 
       # We will handle the snapshots ourselves
-      self.saver = tf.train.Saver(max_to_keep=100000)
+      self.saver = tf.train.Saver(max_to_keep=1000000)
       # Write the train and validation information to tensorboard
       self.writer = tf.summary.FileWriter(self.tbdir, sess.graph)
       self.valwriter = tf.summary.FileWriter(self.tbvaldir)
@@ -160,6 +197,7 @@ class SolverWrapper(object):
       # Fresh train directly from ImageNet weights
       print('Loading initial model weights from {:s}'.format(self.pretrained_model))
       variables = tf.global_variables()
+      print(variables)
       # Initialize all variables first
       sess.run(tf.variables_initializer(variables, name='init'))
       var_keep_dic = self.get_variables_in_checkpoint_file(self.pretrained_model)
@@ -225,7 +263,7 @@ class SolverWrapper(object):
       if now - last_summary_time > cfg.TRAIN.SUMMARY_INTERVAL:
         # Compute the graph with summary
         rpn_loss_cls, rpn_loss_box, loss_cls, loss_box, total_loss, summary = \
-          self.net.train_step_with_summary(sess, blobs, train_op)
+          self.net.train_step_with_summary(sess, blobs, train_op_stage1)
         # rpn_loss_cls, rpn_loss_box, loss_cls, loss_box, center_loss, total_loss, summary = \
         #   self.net.train_step_with_summary_center(sess, blobs, train_op)
 
@@ -239,7 +277,7 @@ class SolverWrapper(object):
       else:
         # Compute the graph without summary
         rpn_loss_cls, rpn_loss_box, loss_cls, loss_box, total_loss = \
-          self.net.train_step(sess, blobs, train_op)
+          self.net.train_step(sess, blobs, train_op_stage1)
         # rpn_loss_cls, rpn_loss_box, loss_cls, loss_box, center_loss, total_loss = \
         #   self.net.train_step_center(sess, blobs, train_op)
       timer.toc()
@@ -332,7 +370,7 @@ def filter_roidb(roidb):
   return filtered_roidb
 
 
-def train_net(network, imdb, roidb, valroidb, output_dir, tb_dir,
+def train_net(network, rfcn_network, imdb, roidb, valroidb, output_dir, tb_dir,
               pretrained_model=None,
               max_iters=40000):
   """Train a Fast R-CNN network."""
@@ -343,7 +381,7 @@ def train_net(network, imdb, roidb, valroidb, output_dir, tb_dir,
   tfconfig.gpu_options.allow_growth = True
 
   with tf.Session(config=tfconfig) as sess:
-    sw = SolverWrapper(sess, network, imdb, roidb, valroidb, output_dir, tb_dir,
+    sw = SolverWrapper(sess, network, rfcn_network, imdb, roidb, valroidb, output_dir, tb_dir,
                        pretrained_model=pretrained_model)
     print('Solving...')
     sw.train_model(sess, max_iters)

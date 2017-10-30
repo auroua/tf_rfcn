@@ -104,10 +104,10 @@ class Network(object):
 
     return rois, rpn_scores
 
-  def _proposal_layer(self, rpn_cls_prob, rpn_bbox_pred, name):
+  def _proposal_layer(self, rpn_cls_prob, rpn_bbox_pred, name, mode='TRAIN'):
     with tf.variable_scope(name) as scope:
       rois, rpn_scores = tf.py_func(proposal_layer,
-                                    [rpn_cls_prob, rpn_bbox_pred, self._im_info, self._mode,
+                                    [rpn_cls_prob, rpn_bbox_pred, self._im_info, mode,
                                      self._feat_stride, self._anchors, self._num_anchors],
                                     [tf.float32, tf.float32])
       rois.set_shape([None, 5])
@@ -204,7 +204,7 @@ class Network(object):
       self._anchors = anchors
       self._anchor_length = anchor_length
 
-  def build_network(self, sess, is_training=True):
+  def build_network(self, sess, input_rois=None, roi_scores=None, is_training=True):
     raise NotImplementedError
 
   def _smooth_l1_loss(self, bbox_pred, bbox_targets, bbox_inside_weights, bbox_outside_weights, sigma=1.0, dim=[1]):
@@ -271,6 +271,63 @@ class Network(object):
       self._event_summaries.update(self._losses)
 
     return loss
+
+  def _add_rpn_losses(self, sigma_rpn=3.0):
+    with tf.variable_scope('loss_' + self._tag) as scope:
+      # RPN, class loss
+      rpn_cls_score = tf.reshape(self._predictions['rpn_cls_score_reshape'], [-1, 2])
+      rpn_label = tf.reshape(self._anchor_targets['rpn_labels'], [-1])
+      rpn_select = tf.where(tf.not_equal(rpn_label, -1))
+      rpn_cls_score = tf.reshape(tf.gather(rpn_cls_score, rpn_select), [-1, 2])
+      rpn_label = tf.reshape(tf.gather(rpn_label, rpn_select), [-1])
+      rpn_cross_entropy = tf.reduce_mean(
+        tf.nn.sparse_softmax_cross_entropy_with_logits(logits=rpn_cls_score, labels=rpn_label))
+
+      # RPN, bbox loss
+      rpn_bbox_pred = self._predictions['rpn_bbox_pred']
+      rpn_bbox_targets = self._anchor_targets['rpn_bbox_targets']
+      rpn_bbox_inside_weights = self._anchor_targets['rpn_bbox_inside_weights']
+      rpn_bbox_outside_weights = self._anchor_targets['rpn_bbox_outside_weights']
+
+      rpn_loss_box = self._smooth_l1_loss(rpn_bbox_pred, rpn_bbox_targets, rpn_bbox_inside_weights,
+                                          rpn_bbox_outside_weights, sigma=sigma_rpn, dim=[1, 2, 3])
+
+      self._losses['rpn_cross_entropy'] = rpn_cross_entropy
+      self._losses['rpn_loss_box'] = rpn_loss_box
+
+      self._losses['rpn_loss'] = rpn_loss_box + rpn_cross_entropy
+
+      self._event_summaries.update(self._losses)
+
+    return self._losses['rpn_loss']
+
+  def _add_rfcn_losses(self, sigma_rpn=3.0):
+    with tf.variable_scope('loss_' + self._tag) as scope:
+      # RCNN, class loss
+      cls_score = self._predictions["cls_score"]
+      label = tf.reshape(self._proposal_targets["labels"], [-1])
+
+      cross_entropy = tf.reduce_mean(
+        tf.nn.sparse_softmax_cross_entropy_with_logits(
+          logits=tf.reshape(cls_score, [-1, self._num_classes]), labels=label))
+
+      # RCNN, bbox loss
+      bbox_pred = self._predictions['bbox_pred']
+      bbox_targets = self._proposal_targets['bbox_targets']
+      bbox_inside_weights = self._proposal_targets['bbox_inside_weights']
+      bbox_outside_weights = self._proposal_targets['bbox_outside_weights']
+
+      loss_box = self._smooth_l1_loss(bbox_pred, bbox_targets, bbox_inside_weights, bbox_outside_weights)
+
+      self._losses['cross_entropy'] = cross_entropy
+      self._losses['loss_box'] = loss_box
+
+      self._losses['rfcn_loss'] = cross_entropy + loss_box
+
+      self._event_summaries.update(self._losses)
+
+    return self._losses['rfcn_loss']
+
 
   def center_loss(self, features, label, alfa, nrof_classes=2):
     """Center loss based on the paper "A Discriminative Feature Learning Approach for Deep Face Recognition"
@@ -339,8 +396,46 @@ class Network(object):
 
     return loss
 
-  def create_architecture(self, sess, mode, num_classes, tag=None,
-                          anchor_scales=(8, 16, 32), anchor_ratios=(0.5, 1, 2)):
+  def get_train_variables(self, scope):
+    vars = []
+    for var in tf.trainable_variables():
+      if scope in var.op.name:
+        if 'rpn' in scope:
+          if 'refined' not in var.op.name:
+            vars.append(var)
+        elif 'rfcn' in scope:
+          if 'rpn' not in var.op.name:
+            vars.append(var)
+        else:
+          raise ValueError('illegle scope name')
+    return vars
+
+  def get_train_variables_stage3(self, scope):
+    vars = []
+    for var in tf.trainable_variables():
+      if scope in var.op.name:
+          if 'rpn_conv' in var.op.name:
+            vars.append(var)
+          elif 'rpn_cls_score' in var.op.name:
+            vars.append(var)
+          elif 'rpn_bbox_pred' in var.op.name:
+            vars.append(var)
+          else:
+            continue
+    return vars
+
+  def get_train_variables_stage4(self, scope):
+    vars = []
+    for var in tf.trainable_variables():
+      if scope in var.op.name:
+          if 'refined' in var.op.name:
+            vars.append(var)
+          else:
+            continue
+    return vars
+
+  def create_architecture(self, sess, mode, num_classes, scope, tag=None,
+                          anchor_scales=(8, 16, 32), anchor_ratios=(0.5, 1, 2), input_rois=None, roi_scores=None):
     self._image = tf.placeholder(tf.float32, shape=[self._batch_size, None, None, 3])
     self._im_info = tf.placeholder(tf.float32, shape=[self._batch_size, 3])
     self._gt_boxes = tf.placeholder(tf.float32, shape=[None, 5])
@@ -373,8 +468,9 @@ class Network(object):
                     slim.conv2d_transpose, slim.separable_conv2d, slim.fully_connected], 
                     weights_regularizer=weights_regularizer,
                     biases_regularizer=biases_regularizer, 
-                    biases_initializer=tf.constant_initializer(0.0)): 
-      rois, cls_prob, bbox_pred = self.build_network(sess, training)
+                    biases_initializer=tf.constant_initializer(0.0)):
+      with tf.variable_scope(scope):
+        rois, cls_prob, bbox_pred = self.build_network(sess, input_rois, roi_scores, training)
 
     layers_to_output = {'rois': rois}
     layers_to_output.update(self._predictions)
@@ -389,7 +485,11 @@ class Network(object):
       self._predictions["bbox_pred"] *= stds
       self._predictions["bbox_pred"] += means
     else:
-      self._add_losses()
+      if scope == 'rpn_network':
+        self._add_rpn_losses()
+        self._add_rfcn_losses()
+      elif scope == 'rfcn_network':
+        self._add_rfcn_losses()
       # self._add_losses_center()
       layers_to_output.update(self._losses)
 

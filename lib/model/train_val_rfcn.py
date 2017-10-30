@@ -114,7 +114,8 @@ class SolverWrapper(object):
 
       # Compute the gradients wrt the loss
       gvs = self.optimizer.compute_gradients(loss)
-
+      gvs_rpn = self.optimizer.compute_gradients(rpn_loss)
+      gvs_class = self.optimizer.compute_gradients(class_loss)
       # Double the gradient of the bias if set
       if cfg.TRAIN.DOUBLE_BIAS:
         final_gvs = []
@@ -127,8 +128,12 @@ class SolverWrapper(object):
               grad = tf.multiply(grad, scale)
             final_gvs.append((grad, var))
         train_op = self.optimizer.apply_gradients(final_gvs)
+        train_op_rpn = self.optimizer.apply_gradients(gvs_rpn)
+        train_op_class = self.optimizer.apply_gradients(gvs_class)
       else:
         train_op = self.optimizer.apply_gradients(gvs)
+        train_op_rpn = self.optimizer.apply_gradients(gvs_rpn)
+        train_op_class = self.optimizer.apply_gradients(gvs_class)
 
       # We will handle the snapshots ourselves
       self.saver = tf.train.Saver(max_to_keep=100000)
@@ -212,10 +217,43 @@ class SolverWrapper(object):
     last_summary_time = time.time()
     while iter < max_iters + 1:
       # Learning rate
-      if iter == cfg.TRAIN.STEPSIZE + 1:
+      # if iter == cfg.TRAIN.STEPSIZE + 1:
+      if iter == 60000+1:        # rpn
         # Add snapshot here before reducing the learning rate
         self.snapshot(sess, iter)
-        sess.run(tf.assign(lr, cfg.TRAIN.LEARNING_RATE * cfg.TRAIN.GAMMA))
+        sess.run(tf.assign(lr, 0.0001))
+      elif iter == 80000+1:      # rfcn  80000-160000-200000
+        # Add snapshot here before reducing the learning rate
+        self.snapshot(sess, iter)
+        sess.run(tf.assign(lr, 0.001))
+      elif iter == 160000 + 1:
+        # Add snapshot here before reducing the learning rate
+        self.snapshot(sess, iter)
+        sess.run(tf.assign(lr, 0.0001))
+      elif iter == 200000 + 1:    # rpn 200000-260000-280000
+        # Add snapshot here before reducing the learning rate
+        self.snapshot(sess, iter)
+        sess.run(tf.assign(lr, 0.001))
+      elif iter == 260000 + 1:
+        # Add snapshot here before reducing the learning rate
+        self.snapshot(sess, iter)
+        sess.run(tf.assign(lr, 0.0001))
+      elif iter == 280000 + 1:   # rfcn 280000-360000-400000
+        # Add snapshot here before reducing the learning rate
+        self.snapshot(sess, iter)
+        sess.run(tf.assign(lr, 0.001))
+      elif iter == 360000 + 1:
+        # Add snapshot here before reducing the learning rate
+        self.snapshot(sess, iter)
+        sess.run(tf.assign(lr, 0.0001))
+      elif iter == 400000 + 1:
+        # Add snapshot here before reducing the learning rate
+        self.snapshot(sess, iter)
+        sess.run(tf.assign(lr, 0.001))
+      elif iter == 460000 + 1:
+        # Add snapshot here before reducing the learning rate
+        self.snapshot(sess, iter)
+        sess.run(tf.assign(lr, 0.0001))
 
       timer.tic()
       # Get training data, one batch at a time
@@ -224,12 +262,16 @@ class SolverWrapper(object):
       now = time.time()
       if now - last_summary_time > cfg.TRAIN.SUMMARY_INTERVAL:
         # Compute the graph with summary
-        rpn_loss_cls, rpn_loss_box, loss_cls, loss_box, total_loss, summary = \
-          self.net.train_step_with_summary(sess, blobs, train_op)
-        # rpn_loss_cls, rpn_loss_box, loss_cls, loss_box, center_loss, total_loss, summary = \
-        #   self.net.train_step_with_summary_center(sess, blobs, train_op)
-
-
+        if (iter < 80000) or (200000 <= iter < 280000) or (400000 <= iter < max_iters+1):
+        # if (iter < 10) or (100 <= iter < 200):
+        #   print(str(iter), '@@@'*10, 'train rpn layers')
+          rpn_loss_cls, rpn_loss_box, loss_cls, loss_box, total_loss, summary = \
+            self.net.train_step_with_summary(sess, blobs, train_op_rpn)
+        # elif (80000 <= iter < 120000) or (200000 <= iter < max_iters+1):
+        else:
+          # print(str(iter), '=====' * 10, 'train rfcn layers')
+          rpn_loss_cls, rpn_loss_box, loss_cls, loss_box, total_loss, summary = \
+            self.net.train_step_with_summary(sess, blobs, train_op_class)
         self.writer.add_summary(summary, float(iter))
         # Also check the summary on the validation set
         blobs_val = self.data_layer_val.forward()
@@ -238,10 +280,16 @@ class SolverWrapper(object):
         last_summary_time = now
       else:
         # Compute the graph without summary
-        rpn_loss_cls, rpn_loss_box, loss_cls, loss_box, total_loss = \
-          self.net.train_step(sess, blobs, train_op)
-        # rpn_loss_cls, rpn_loss_box, loss_cls, loss_box, center_loss, total_loss = \
-        #   self.net.train_step_center(sess, blobs, train_op)
+        if (iter < 80000) or (200000 <= iter < 280000) or (400000 <= iter < max_iters + 1):
+        # if (iter < 10) or (100 <= iter < 200):
+        #   print(str(iter), '@@@' * 10, 'train rpn layers')
+          rpn_loss_cls, rpn_loss_box, loss_cls, loss_box, total_loss = \
+            self.net.train_step(sess, blobs, train_op_rpn)
+        else:
+          # print(str(iter), '=====' * 10, 'train rfcn layers')
+          rpn_loss_cls, rpn_loss_box, loss_cls, loss_box, total_loss = \
+            self.net.train_step(sess, blobs, train_op_class)
+
       timer.toc()
 
       # Display training information
@@ -249,11 +297,7 @@ class SolverWrapper(object):
         print('iter: %d / %d, total loss: %.6f\n >>> rpn_loss_cls: %.6f\n '
               '>>> rpn_loss_box: %.6f\n >>> loss_cls: %.6f\n >>> loss_box: %.6f\n >>> lr: %f' % \
               (iter, max_iters, total_loss, rpn_loss_cls, rpn_loss_box, loss_cls, loss_box, lr.eval()))
-        # print('iter: %d / %d, total loss: %.6f\n >>> rpn_loss_cls: %.6f\n '
-        #       '>>> rpn_loss_box: %.6f\n >>> loss_cls: %.6f\n >>> loss_box: %.6f\n >>> center_loss: %.6f\n >>> lr: %f' % \
-        #       (iter, max_iters, total_loss, rpn_loss_cls, rpn_loss_box, loss_cls, loss_box, center_loss, lr.eval()))
         print('speed: {:.3f}s / iter'.format(timer.average_time))
-
 
       if iter % cfg.TRAIN.SNAPSHOT_ITERS == 0:
         last_snapshot_iter = iter
@@ -283,9 +327,7 @@ class SolverWrapper(object):
             sfile_meta = sfile + '.meta'
             os.remove(str(sfile_meta))
             ss_paths.remove(sfile)
-
       iter += 1
-
     if last_snapshot_iter != iter - 1:
       self.snapshot(sess, iter - 1)
 

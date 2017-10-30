@@ -7,10 +7,7 @@ from __future__ import absolute_import
 from __future__ import division
 from __future__ import print_function
 
-# import _init_paths
-# from model.train_val import get_training_roidb, train_net
-# from model.train_val_rfcn import get_training_roidb, train_net
-from model.train_val import get_training_roidb, train_net
+from model.train_val_rfcn_iteration4 import get_training_roidb, train_net
 from model.config import cfg, cfg_from_file, cfg_from_list, get_output_dir, get_output_tb_dir
 from datasets.factory import get_imdb
 import datasets.imdb
@@ -19,9 +16,7 @@ import pprint
 import numpy as np
 import sys
 
-import tensorflow as tf
-from nets.vgg16 import vgg16
-from nets.resnet_v1_rfcn_hole import resnetv1
+from nets.resnet_v1_rfcn_hole_iterator4 import resnetv1
 
 def parse_args():
   """
@@ -122,17 +117,9 @@ if __name__ == '__main__':
   cfg.TRAIN.USE_FLIPPED = orgflip
 
   # load network
-  if args.net == 'vgg16':
-    net = vgg16(batch_size=cfg.TRAIN.IMS_PER_BATCH)
-  elif args.net == 'res50':
-    net = resnetv1(batch_size=cfg.TRAIN.IMS_PER_BATCH, num_layers=50)
-  elif args.net == 'res101':
-    net = resnetv1(batch_size=cfg.TRAIN.IMS_PER_BATCH, num_layers=101)
-  elif args.net == 'res152':
-    net = resnetv1(batch_size=cfg.TRAIN.IMS_PER_BATCH, num_layers=152)
-  else:
-    raise NotImplementedError
-    
-  train_net(net, imdb, roidb, valroidb, output_dir, tb_dir,
+  rpn_net = resnetv1(batch_size=cfg.TRAIN.IMS_PER_BATCH, num_layers=101)
+  rfcn_net = resnetv1(batch_size=cfg.TRAIN.IMS_PER_BATCH, num_layers=101)
+
+  train_net(rpn_net, rfcn_net, imdb, roidb, valroidb, output_dir, tb_dir,
             pretrained_model=args.weight,
             max_iters=args.max_iters)

@@ -93,6 +93,11 @@ def im_detect(sess, net, im):
   # still not sure about the scale, maybe full image it is 1.
   blobs['im_info'] = np.array([[im_blob.shape[1], im_blob.shape[2], im_scales[0]]], dtype=np.float32)
 
+  # print('@@@@@@'*10)
+  # print(blobs['data'])
+  # print(blobs['data'].shape)
+  # print('@@@@@@' * 10)
+  # print(blobs['im_info'])
   _, scores, bbox_pred, rois = net.test_image(sess, blobs['data'], blobs['im_info'])
   
   boxes = rois[:, 1:5] / im_scales[0]
@@ -155,6 +160,11 @@ def test_net(sess, net, imdb, weights_filename, max_per_image=100, thresh=0.05):
 
   for i in range(num_images):
     im = cv2.imread(imdb.image_path_at(i))
+    # print('==='*10)
+    # print(imdb.image_path_at(i))
+
+    # cv2.imshow('input_img', im)
+    # cv2.waitKey(0)
 
     _t['im_detect'].tic()
     scores, boxes = im_detect(sess, net, im)
