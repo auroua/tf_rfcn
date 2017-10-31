@@ -51,6 +51,7 @@ class SolverWrapper(object):
     # Store the model snapshot
     filename = cfg.TRAIN.SNAPSHOT_PREFIX + '_iter_{:d}'.format(iter) + '.ckpt'
     filename = os.path.join(self.output_dir, filename)
+
     self.saver.save(sess, filename)
     print('Wrote snapshot to: {:s}'.format(filename))
 
@@ -76,7 +77,6 @@ class SolverWrapper(object):
       pickle.dump(cur_val, fid, pickle.HIGHEST_PROTOCOL)
       pickle.dump(perm_val, fid, pickle.HIGHEST_PROTOCOL)
       pickle.dump(iter, fid, pickle.HIGHEST_PROTOCOL)
-
     return filename, nfilename
 
   def get_variables_in_checkpoint_file(self, file_name):
@@ -128,19 +128,6 @@ class SolverWrapper(object):
       gvs_rpn_stage3 = self.optimizer.compute_gradients(rpn_loss, rpn_trainable_variables_stage3)
       gvs_rfcn_stage4 = self.optimizer.compute_gradients(rpn_rfcn_loss, rpn_trainable_variables_stage4)
 
-      # Double the gradient of the bias if set
-      # if cfg.TRAIN.DOUBLE_BIAS:
-      #   final_gvs = []
-      #   with tf.variable_scope('Gradient_Mult') as scope:
-      #     for grad, var in gvs:
-      #       scale = 1.
-      #       if cfg.TRAIN.DOUBLE_BIAS and '/biases:' in var.name:
-      #         scale *= 2.
-      #       if not np.allclose(scale, 1.0):
-      #         grad = tf.multiply(grad, scale)
-      #       final_gvs.append((grad, var))
-      #   train_op = self.optimizer.apply_gradients(final_gvs)
-      # else:
       train_op_stage1 = self.optimizer.apply_gradients(gvs_rpn_stage1)
       train_op_stage2 = self.optimizer.apply_gradients(gvs_rfcn_stage2)
       train_op_stage3 = self.optimizer.apply_gradients(gvs_rpn_stage3)
@@ -149,8 +136,14 @@ class SolverWrapper(object):
       # We will handle the snapshots ourselves
       self.saver = tf.train.Saver(max_to_keep=1000000)
       # Write the train and validation information to tensorboard
-      self.writer = tf.summary.FileWriter(self.tbdir, sess.graph)
-      self.valwriter = tf.summary.FileWriter(self.tbvaldir)
+      self.writer_stage1 = tf.summary.FileWriter(self.tbdir+'/stage1', sess.graph)
+      self.writer_stage2 = tf.summary.FileWriter(self.tbdir+'/stage2', sess.graph)
+      self.writer_stage3 = tf.summary.FileWriter(self.tbdir+'/stage3', sess.graph)
+      self.writer_stage4 = tf.summary.FileWriter(self.tbdir+'/stage4', sess.graph)
+      self.valwriter_stage1 = tf.summary.FileWriter(self.tbvaldir+'/stage1')
+      self.valwriter_stage2 = tf.summary.FileWriter(self.tbvaldir+'/stage2')
+      self.valwriter_stage3 = tf.summary.FileWriter(self.tbvaldir+'/stage3')
+      self.valwriter_stage4 = tf.summary.FileWriter(self.tbvaldir+'/stage4')
 
     # Find previous snapshots if there is any to restore from
     sfiles = os.path.join(self.output_dir, cfg.TRAIN.SNAPSHOT_PREFIX + '_iter_*.ckpt.meta')
@@ -231,67 +224,82 @@ class SolverWrapper(object):
     iter = last_snapshot_iter + 1
     last_summary_time = time.time()
     stage_infor = ''
-    while iter < max_iters + 1:
+    # while iter < max_iters + 1:
+    while iter < 200001:
       # Learning rate
       if iter == 80001:
+      # if iter == 81:
         # Add snapshot here before reducing the learning rate
         self.snapshot(sess, iter)
         sess.run(tf.assign(lr, 0.001))
-
-      timer.tic()
       # Get training data, one batch at a time
       blobs = self.data_layer.forward()
-
       # stage 1  training rpn layers and backbones  in rpn network
       if iter < 80001:
+      # if iter < 81:
         stage_infor = 'stage1'
         if iter == 60001:
+        # if iter == 61:
           sess.run(tf.assign(lr, 0.0001))
+        timer.tic()
         now = time.time()
         if now - last_summary_time > cfg.TRAIN.SUMMARY_INTERVAL:
           # Compute the graph with summary
           rpn_loss_cls, rpn_loss_box, loss_cls, loss_box, total_loss, summary = \
             self.net.train_rpn_step_with_summary(sess, blobs, train_op_stage1)
-          self.writer.add_summary(summary, float(iter))
+          self.writer_stage1.add_summary(summary, float(iter))
           # Also check the summary on the validation set
           blobs_val = self.data_layer_val.forward()
           summary_val = self.net.get_summary(sess, blobs_val)
-          self.valwriter.add_summary(summary_val, float(iter))
+          self.valwriter_stage1.add_summary(summary_val, float(iter))
           last_summary_time = now
         else:
           # Compute the graph without summary
           rpn_loss_cls, rpn_loss_box, loss_cls, loss_box, total_loss = \
             self.net.train_rpn_step(sess, blobs, train_op_stage1)
         timer.toc()
+        if iter == 80000:
+          self.writer_stage1.close()
+          self.valwriter_stage1.close()
       # stage 2 training rfcn layers and backbones  in rfcn network
-      elif 80001 < iter < 200001:
+      elif 80001 <= iter < 200001:
+      # elif 81 <= iter < 201:
         stage_infor = 'stage2'
+        rpn_loss_cls = 0
+        rpn_loss_box = 0
         if iter == 160001:
+        # if iter == 161:
+          self.snapshot(sess, iter)
           sess.run(tf.assign(lr, 0.0001))
+        timer.tic()
         now = time.time()
         if now - last_summary_time > cfg.TRAIN.SUMMARY_INTERVAL:
           # Compute the graph with summary
-          rpn_loss_cls, rpn_loss_box, loss_cls, loss_box, total_loss, summary = \
-            self.rfcn_network.train_rfcn_step_with_summary(sess, blobs, train_op_stage2)
-          self.writer.add_summary(summary, float(iter))
+          loss_cls, loss_box, total_loss, summary = \
+            self.rfcn_network.train_rfcn_step_with_summary_stage2(sess, blobs, train_op_stage2, self.net)
+          self.writer_stage2.add_summary(summary, float(iter))
           # Also check the summary on the validation set
           blobs_val = self.data_layer_val.forward()
-          summary_val = self.net.get_summary(sess, blobs_val)
-          self.valwriter.add_summary(summary_val, float(iter))
+          summary_val = self.rfcn_network.get_summary_stage2(sess, blobs_val, self.net)
+          self.valwriter_stage2.add_summary(summary_val, float(iter))
           last_summary_time = now
         else:
           # Compute the graph without summary
-          rpn_loss_cls, rpn_loss_box, loss_cls, loss_box, total_loss = \
-            self.rfcn_network.train_rfcn_step(sess, blobs, train_op_stage2)
+          loss_cls, loss_box, total_loss = \
+            self.rfcn_network.train_rfcn_step_stage2(sess, blobs, train_op_stage2, self.net)
         timer.toc()
+        if iter == 200000:
+          self.writer_stage2.close()
+          self.valwriter_stage2.close()
       else:
         raise ValueError('illeagle input iter value')
 
       # Display training information
-      if iter % (cfg.TRAIN.DISPLAY) == 0:
-        print('iter: %d / %d, total loss: %.6f\n >>> rpn_loss_cls: %.6f\n '
+      # if iter % (cfg.TRAIN.DISPLAY) == 0:
+      if iter % 20 == 0:
+        print('iter: %d / %d, stage: %s, total loss: %.6f\n >>> rpn_loss_cls: %.6f\n '
               '>>> rpn_loss_box: %.6f\n >>> loss_cls: %.6f\n >>> loss_box: %.6f\n >>> lr: %f' % \
-              (iter, max_iters, total_loss, rpn_loss_cls, rpn_loss_box, loss_cls, loss_box, lr.eval()))
+              (iter, max_iters, stage_infor, total_loss, rpn_loss_cls, rpn_loss_box, loss_cls, loss_box, lr.eval()))
         print('speed: {:.3f}s / iter'.format(timer.average_time))
 
       if iter % cfg.TRAIN.SNAPSHOT_ITERS == 0:
@@ -299,132 +307,119 @@ class SolverWrapper(object):
         snapshot_path, np_path = self.snapshot(sess, iter)
         np_paths.append(np_path)
         ss_paths.append(snapshot_path)
-
-        # Remove the old snapshots if there are too many
-        if len(np_paths) > cfg.TRAIN.SNAPSHOT_KEPT:
-          to_remove = len(np_paths) - cfg.TRAIN.SNAPSHOT_KEPT
-          for c in range(to_remove):
-            nfile = np_paths[0]
-            os.remove(str(nfile))
-            np_paths.remove(nfile)
-
-        if len(ss_paths) > cfg.TRAIN.SNAPSHOT_KEPT:
-          to_remove = len(ss_paths) - cfg.TRAIN.SNAPSHOT_KEPT
-          for c in range(to_remove):
-            sfile = ss_paths[0]
-            # To make the code compatible to earlier versions of Tensorflow,
-            # where the naming tradition for checkpoints are different
-            if os.path.exists(str(sfile)):
-              os.remove(str(sfile))
-            else:
-              os.remove(str(sfile + '.data-00000-of-00001'))
-              os.remove(str(sfile + '.index'))
-            sfile_meta = sfile + '.meta'
-            os.remove(str(sfile_meta))
-            ss_paths.remove(sfile)
       iter += 1
 
-
+    if iter <= 200001:
+      ###############################################
+      #####  merge rfcn_network to rpn_network  #####
+      ###############################################
+      merged_ops = merged_networks_rfcn2rpn('rfcn_network', 'rpn_network')
+      with tf.variable_scope('rpn_network', reuse=True):
+        rpn_conv1 = tf.get_variable('resnet_v1_101/block2/unit_1/bottleneck_v1/shortcut/weights')
+        rpn_conv2 = tf.get_variable('resnet_v1_101/refined_reduce_depth/weights')
+        rpn_conv3 = tf.get_variable('resnet_v1_101/block4/unit_3/bottleneck_v1/conv3/weights')
+        rpn_conv4 = tf.get_variable('resnet_v1_101/block3/unit_18/bottleneck_v1/conv2/weights')
+        rpn_conv5 = tf.get_variable('resnet_v1_101/block3/unit_14/bottleneck_v1/conv3/weights')
+      with tf.variable_scope('rfcn_network', reuse=True):
+        rfcn_conv1 = tf.get_variable('resnet_v1_101/block2/unit_1/bottleneck_v1/shortcut/weights')
+        rfcn_conv2 = tf.get_variable('resnet_v1_101/refined_reduce_depth/weights')
+        rfcn_conv3 = tf.get_variable('resnet_v1_101/block4/unit_3/bottleneck_v1/conv3/weights')
+        rfcn_conv4 = tf.get_variable('resnet_v1_101/block3/unit_18/bottleneck_v1/conv2/weights')
+        rfcn_conv5 = tf.get_variable('resnet_v1_101/block3/unit_14/bottleneck_v1/conv3/weights')
+      with tf.control_dependencies(merged_ops):
+        rpn_conv1 = tf.identity(rpn_conv1)
+        bool1 = tf.equal(rpn_conv1, rfcn_conv1)
+        bool2 = tf.equal(rpn_conv2, rfcn_conv2)
+        bool3 = tf.equal(rpn_conv3, rfcn_conv3)
+        bool4 = tf.equal(rpn_conv4, rfcn_conv4)
+        bool5 = tf.equal(rpn_conv5, rfcn_conv5)
+        bool1_val, bool2_val, bool3_val, bool4_val, bool5_val = \
+          sess.run([bool1, bool2, bool3, bool4, bool5])
     # stage 3 and stage 4
     sess.run(tf.assign(lr, cfg.TRAIN.LEARNING_RATE))
-    while iter < max_iters + 1:
-      if iter == 280001:
-        # Add snapshot here before reducing the learning rate
-        self.snapshot(sess, iter)
-        sess.run(tf.assign(lr, 0.001))
+    # while iter < max_iters + 1:
+    while iter < 400001:
+        if iter == 280001:
+        # if iter == 261:
+          # Add snapshot here before reducing the learning rate
+          self.snapshot(sess, iter)
+          sess.run(tf.assign(lr, 0.001))
 
-      # stage 3 training rpn layers only  in rpn network rpn layers
-      if 200001 < iter < 280001:
-        stage_infor = 'stage3'
-        if iter == 260001:
-          sess.run(tf.assign(lr, 0.0001))
-
-        now = time.time()
-        if now - last_summary_time > cfg.TRAIN.SUMMARY_INTERVAL:
-          # Compute the graph with summary
-          rpn_loss_cls, rpn_loss_box, loss_cls, loss_box, total_loss, summary = \
-            self.net.train_rpn_step_with_summary(sess, blobs, train_op_stage3)
-          self.writer.add_summary(summary, float(iter))
-          # Also check the summary on the validation set
-          blobs_val = self.data_layer_val.forward()
-          summary_val = self.net.get_summary(sess, blobs_val)
-          self.valwriter.add_summary(summary_val, float(iter))
-          last_summary_time = now
+        blobs = self.data_layer.forward()
+        # stage 3 training rpn layers only  in rpn network rpn layers
+        if 200001 <= iter < 280001:
+        # if 201 <= iter < 581:
+          stage_infor = 'stage3'
+          # if iter == 260001:
+          if iter == 260001:
+            self.snapshot(sess, iter)
+            sess.run(tf.assign(lr, 0.0001))
+          timer.tic()
+          now = time.time()
+          if now - last_summary_time > cfg.TRAIN.SUMMARY_INTERVAL:
+            # Compute the graph with summary
+            rpn_loss_cls, rpn_loss_box, loss_cls, loss_box, total_loss, summary = \
+              self.net.train_rpn_step_with_summary(sess, blobs, train_op_stage3)
+            self.writer_stage3.add_summary(summary, float(iter))
+            # Also check the summary on the validation set
+            blobs_val = self.data_layer_val.forward()
+            summary_val = self.net.get_summary(sess, blobs_val)
+            self.valwriter_stage3.add_summary(summary_val, float(iter))
+            last_summary_time = now
+          else:
+            # Compute the graph without summary
+            rpn_loss_cls, rpn_loss_box, loss_cls, loss_box, total_loss = \
+              self.net.train_rpn_step(sess, blobs, train_op_stage3)
+          timer.toc()
+          if iter == 280000:
+            self.writer_stage3.close()
+            self.valwriter_stage3.close()
+        # stage 4 training rfcn layer only in rpn network rfcn layers
+        elif 280001 <= iter < 400001:
+        # elif 280001 <= iter < 1401:
+          stage_infor = 'stage4'
+          if iter == 360001:
+          # if iter == 1361:
+            sess.run(tf.assign(lr, 0.0001))
+          timer.tic()
+          now = time.time()
+          if now - last_summary_time > cfg.TRAIN.SUMMARY_INTERVAL:
+            # Compute the graph with summary
+            rpn_loss_cls, rpn_loss_box, loss_cls, loss_box, total_loss, summary = \
+              self.net.train_rpn_step_with_summary(sess, blobs, train_op_stage4)
+            self.writer_stage4.add_summary(summary, float(iter))
+            # Also check the summary on the validation set
+            blobs_val = self.data_layer_val.forward()
+            summary_val = self.net.get_summary(sess, blobs_val)
+            self.valwriter_stage4.add_summary(summary_val, float(iter))
+            last_summary_time = now
+          else:
+            # Compute the graph without summary
+            rpn_loss_cls, rpn_loss_box, loss_cls, loss_box, total_loss = \
+              self.net.train_rpn_step(sess, blobs, train_op_stage4)
+          timer.toc()
+          if iter == 400000:
+            self.writer_stage4.close()
+            self.valwriter_stage4.close()
         else:
-          # Compute the graph without summary
-          rpn_loss_cls, rpn_loss_box, loss_cls, loss_box, total_loss = \
-            self.net.train_rpn_step(sess, blobs, train_op_stage3)
-        timer.toc()
-      # stage 4 training rfcn layer only in rpn network rfcn layers
-      elif 280001 < iter < 400001:
-        stage_infor = 'stage4'
-        if iter == 360001:
-          sess.run(tf.assign(lr, 0.0001))
+          raise ValueError('iter is not allowed')
 
-        now = time.time()
-        if now - last_summary_time > cfg.TRAIN.SUMMARY_INTERVAL:
-          # Compute the graph with summary
-          rpn_loss_cls, rpn_loss_box, loss_cls, loss_box, total_loss, summary = \
-            self.net.train_rfcn_step_with_summary(sess, blobs, train_op_stage4)
-          self.writer.add_summary(summary, float(iter))
-          # Also check the summary on the validation set
-          blobs_val = self.data_layer_val.forward()
-          summary_val = self.net.get_summary(sess, blobs_val)
-          self.valwriter.add_summary(summary_val, float(iter))
-          last_summary_time = now
-        else:
-          # Compute the graph without summary
-          rpn_loss_cls, rpn_loss_box, loss_cls, loss_box, total_loss = \
-            self.net.train_rfcn_step(sess, blobs, train_op_stage4)
-        timer.toc()
-      else:
-        raise ValueError('iter is not allowed')
+        # Display training information
+        if iter % (cfg.TRAIN.DISPLAY) == 0:
+          print('iter: %d / %d, stage: %s, total loss: %.6f\n >>> rpn_loss_cls: %.6f\n '
+                '>>> rpn_loss_box: %.6f\n >>> loss_cls: %.6f\n >>> loss_box: %.6f\n >>> lr: %f' % \
+                (iter, max_iters, stage_infor, total_loss, rpn_loss_cls, rpn_loss_box, loss_cls, loss_box, lr.eval()))
+          print('speed: {:.3f}s / iter'.format(timer.average_time))
 
-      # Display training information
-      if iter % (cfg.TRAIN.DISPLAY) == 0:
-        print('iter: %d / %d, total loss: %.6f\n >>> rpn_loss_cls: %.6f\n '
-              '>>> rpn_loss_box: %.6f\n >>> loss_cls: %.6f\n >>> loss_box: %.6f\n >>> lr: %f' % \
-              (iter, max_iters, total_loss, rpn_loss_cls, rpn_loss_box, loss_cls, loss_box, lr.eval()))
-        print('speed: {:.3f}s / iter'.format(timer.average_time))
-
-      if iter % cfg.TRAIN.SNAPSHOT_ITERS == 0:
-        last_snapshot_iter = iter
-        snapshot_path, np_path = self.snapshot(sess, iter)
-        np_paths.append(np_path)
-        ss_paths.append(snapshot_path)
-
-        # Remove the old snapshots if there are too many
-        if len(np_paths) > cfg.TRAIN.SNAPSHOT_KEPT:
-          to_remove = len(np_paths) - cfg.TRAIN.SNAPSHOT_KEPT
-          for c in range(to_remove):
-            nfile = np_paths[0]
-            os.remove(str(nfile))
-            np_paths.remove(nfile)
-
-        if len(ss_paths) > cfg.TRAIN.SNAPSHOT_KEPT:
-          to_remove = len(ss_paths) - cfg.TRAIN.SNAPSHOT_KEPT
-          for c in range(to_remove):
-            sfile = ss_paths[0]
-            # To make the code compatible to earlier versions of Tensorflow,
-            # where the naming tradition for checkpoints are different
-            if os.path.exists(str(sfile)):
-              os.remove(str(sfile))
-            else:
-              os.remove(str(sfile + '.data-00000-of-00001'))
-              os.remove(str(sfile + '.index'))
-            sfile_meta = sfile + '.meta'
-            os.remove(str(sfile_meta))
-            ss_paths.remove(sfile)
-
-      iter += 1
-
-
+        if iter % cfg.TRAIN.SNAPSHOT_ITERS == 0:
+          last_snapshot_iter = iter
+          snapshot_path, np_path = self.snapshot(sess, iter)
+          np_paths.append(np_path)
+          ss_paths.append(snapshot_path)
+        iter += 1
 
     if last_snapshot_iter != iter - 1:
       self.snapshot(sess, iter - 1)
-
-    self.writer.close()
-    self.valwriter.close()
 
 
 def get_training_roidb(imdb):
@@ -439,6 +434,22 @@ def get_training_roidb(imdb):
   print('done')
 
   return imdb.roidb
+
+
+def merged_networks_rfcn2rpn(origin_scope, target_scope):
+  # print('####################'*10)
+  # for var in tf.trainable_variables():
+  #   print(var.op.name)
+  # print('####################'*10)
+  assign_ops = []
+  for var in tf.trainable_variables():
+    if (origin_scope in var.op.name):
+      for var_target in tf.trainable_variables():
+        if target_scope in var_target.op.name:
+          if var_target.op.name.replace(target_scope, origin_scope) == var.op.name:
+            assign_ops.append(tf.assign(var_target, var))
+            break
+  return assign_ops
 
 
 def filter_roidb(roidb):

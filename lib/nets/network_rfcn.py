@@ -24,7 +24,6 @@ from model.config import cfg
 
 import pprint
 
-
 class Network(object):
     def __init__(self, batch_size=1):
         self._feat_stride = [16, ]
@@ -41,7 +40,7 @@ class Network(object):
         self._event_summaries = {}
         self._variables_to_fix = {}
 
-    def _add_image_summary(self, image, boxes):
+    def _add_image_summary(self, image, boxes, summarys_list):
         # add back mean
         image += cfg.PIXEL_MEANS
         # bgr to rgb (opencv uses bgr)
@@ -61,18 +60,20 @@ class Network(object):
         boxes = tf.expand_dims(boxes, dim=0)
         image = tf.image.draw_bounding_boxes(image, boxes)
 
-        return tf.summary.image('ground_truth', image)
+        image_summary_op = tf.summary.image('ground_truth', image)
+        summarys_list.append(image_summary_op)
+        return image_summary_op
 
-    def _add_act_summary(self, tensor):
-        tf.summary.histogram('ACT/' + tensor.op.name + '/activations', tensor)
-        tf.summary.scalar('ACT/' + tensor.op.name + '/zero_fraction',
-                          tf.nn.zero_fraction(tensor))
+    def _add_act_summary(self, tensor, train_summaries):
+        train_summaries.append(tf.summary.histogram('ACT/' + tensor.op.name + '/activations', tensor))
+        train_summaries.append(tf.summary.scalar('ACT/' + tensor.op.name + '/zero_fraction',
+                          tf.nn.zero_fraction(tensor)))
 
-    def _add_score_summary(self, key, tensor):
-        tf.summary.histogram('SCORE/' + tensor.op.name + '/' + key + '/scores', tensor)
+    def _add_score_summary(self, key, tensor, train_summaries):
+        train_summaries.append(tf.summary.histogram('SCORE/' + tensor.op.name + '/' + key + '/scores', tensor))
 
-    def _add_train_summary(self, var):
-        tf.summary.histogram('TRAIN/' + var.op.name, var)
+    def _add_train_summary(self, var, train_summaries):
+        train_summaries.append(tf.summary.histogram('TRAIN/' + var.op.name, var))
 
     def _reshape_layer(self, bottom, num_dim, name):
         input_shape = tf.shape(bottom)
@@ -494,19 +495,39 @@ class Network(object):
             # self._add_losses_center()
             layers_to_output.update(self._losses)
 
+        train_summaries = []
         val_summaries = []
         with tf.device("/cpu:0"):
-            val_summaries.append(self._add_image_summary(self._image, self._gt_boxes))
+            val_summaries.append(self._add_image_summary(self._image, self._gt_boxes, train_summaries))
             for key, var in self._event_summaries.items():
-                val_summaries.append(tf.summary.scalar(key, var))
+                loss_summary_op = tf.summary.scalar('LOSS/'+scope+'/'+key, var)
+                val_summaries.append(loss_summary_op)
+                train_summaries.append(loss_summary_op)
             for key, var in self._score_summaries.items():
-                self._add_score_summary(key, var)
+                self._add_score_summary(key, var, train_summaries)
             for var in self._act_summaries:
-                self._add_act_summary(var)
+                self._add_act_summary(var, train_summaries)
             for var in self._train_summaries:
-                self._add_train_summary(var)
+                self._add_train_summary(var, train_summaries)
 
-        self._summary_op = tf.summary.merge_all()
+        train_summaries2 = []
+        if scope == 'rfcn_network':
+            for key in train_summaries:
+                if 'rpn_network' not in key.op.name:
+                    # print('#############'*3)
+                    train_summaries2.append(key)
+        # print('##########'*10)
+        # summarys = []
+        # for key in tf.get_collection(tf.GraphKeys.SUMMARIES):
+        #     if scope in key.op.name:
+        #         print(key)
+        #         summarys.append(key)
+        # print('##########' * 10)
+        # # self._summary_op = tf.summary.merge_all()
+        if len(train_summaries2) > 0:
+            self._summary_op = tf.summary.merge(train_summaries2)
+        else:
+            self._summary_op = tf.summary.merge(train_summaries)
         if not testing:
             self._summary_op_val = tf.summary.merge(val_summaries)
 
@@ -543,6 +564,16 @@ class Network(object):
 
         return summary
 
+    def get_summary_stage2(self, sess, blobs, network_rpn):
+        feed_dict = {self._image: blobs['data'], self._im_info: blobs['im_info'],
+                     self._gt_boxes: blobs['gt_boxes'],
+                     network_rpn._image: blobs['data'], network_rpn._im_info: blobs['im_info'],
+                     network_rpn._gt_boxes: blobs['gt_boxes']
+                     }
+        summary = sess.run(self._summary_op_val, feed_dict=feed_dict)
+
+        return summary
+
     def train_step(self, sess, blobs, train_op):
         feed_dict = {self._image: blobs['data'], self._im_info: blobs['im_info'],
                      self._gt_boxes: blobs['gt_boxes']}
@@ -567,7 +598,20 @@ class Network(object):
                                                                            feed_dict=feed_dict)
         return rpn_loss_cls, rpn_loss_box, loss_cls, loss_box, loss
 
-    def train_rfcn_step(self, sess, blobs, train_op):
+    def train_rfcn_step_stage2(self, sess, blobs, train_op, network_rpn):
+        feed_dict = {self._image: blobs['data'], self._im_info: blobs['im_info'],
+                     self._gt_boxes: blobs['gt_boxes'],
+                     network_rpn._image: blobs['data'], network_rpn._im_info: blobs['im_info'],
+                     network_rpn._gt_boxes: blobs['gt_boxes']
+                     }
+        loss_cls, loss_box, loss, _ = sess.run([self._losses['cross_entropy'],
+                                                                            self._losses['loss_box'],
+                                                                            self._losses['rfcn_loss'],
+                                                                            train_op],
+                                                                           feed_dict=feed_dict)
+        return loss_cls, loss_box, loss
+
+    def train_rfcn_step_stage4(self, sess, blobs, train_op):
         feed_dict = {self._image: blobs['data'], self._im_info: blobs['im_info'],
                      self._gt_boxes: blobs['gt_boxes']}
         rpn_loss_cls, rpn_loss_box, loss_cls, loss_box, loss, _ = sess.run([self._losses["rpn_cross_entropy"],
@@ -619,7 +663,21 @@ class Network(object):
                                                                                     feed_dict=feed_dict)
         return rpn_loss_cls, rpn_loss_box, loss_cls, loss_box, loss_rpn, summary
 
-    def train_rfcn_step_with_summary(self, sess, blobs, train_op):
+    def train_rfcn_step_with_summary_stage2(self, sess, blobs, train_op, network_rpn):
+        feed_dict = {self._image: blobs['data'], self._im_info: blobs['im_info'],
+                     self._gt_boxes: blobs['gt_boxes'],
+                     network_rpn._image: blobs['data'], network_rpn._im_info: blobs['im_info'],
+                     network_rpn._gt_boxes: blobs['gt_boxes']
+                     }
+        loss_cls, loss_box, loss_rpn, summary, _ = sess.run([self._losses['cross_entropy'],
+                                                                                     self._losses['loss_box'],
+                                                                                     self._losses['rfcn_loss'],
+                                                                                     self._summary_op,
+                                                                                     train_op],
+                                                                                    feed_dict=feed_dict)
+        return loss_cls, loss_box, loss_rpn, summary
+
+    def train_rfcn_step_with_summary_stage4(self, sess, blobs, train_op):
         feed_dict = {self._image: blobs['data'], self._im_info: blobs['im_info'],
                      self._gt_boxes: blobs['gt_boxes']}
         rpn_loss_cls, rpn_loss_box, loss_cls, loss_box, loss_rpn, summary, _ = sess.run([self._losses["rpn_cross_entropy"],
