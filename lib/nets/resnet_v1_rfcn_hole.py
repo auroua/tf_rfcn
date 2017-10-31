@@ -14,7 +14,7 @@ from tensorflow.contrib.slim.python.slim.nets import resnet_utils
 from tensorflow.contrib.slim.python.slim.nets import resnet_v1
 import numpy as np
 
-from nets.network_rfcn import Network
+from nets.network import Network
 from tensorflow.python.framework import ops
 from tensorflow.contrib.layers.python.layers import regularizers
 from tensorflow.python.ops import nn_ops

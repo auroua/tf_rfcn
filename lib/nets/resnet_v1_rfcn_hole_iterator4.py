@@ -172,6 +172,7 @@ class resnetv1(Network):
     return net
 
   def build_network(self, sess, input_rois=None, roi_scores=None, is_training=True):
+    FLAGS = False
     # select initializers
     if cfg.TRAIN.TRUNCATED:
       initializer = tf.truncated_normal_initializer(mean=0.0, stddev=0.01)
@@ -242,29 +243,24 @@ class resnetv1(Network):
     self._act_summaries.append(net_conv4)
     self._layers['head'] = net_conv4
     with tf.variable_scope(self._resnet_scope, self._resnet_scope):
-      # build the anchors for the image
-      self._anchor_component()
-
-      # rpn
-      rpn = slim.conv2d(net_conv4, 512, [3, 3], trainable=is_training, weights_initializer=initializer,
-                        scope="rpn_conv/3x3")
-      self._act_summaries.append(rpn)
-      rpn_cls_score = slim.conv2d(rpn, self._num_anchors * 2, [1, 1], trainable=is_training,
-                                  weights_initializer=initializer,
-                                  padding='VALID', activation_fn=None, scope='rpn_cls_score')
-      # # change it so that the score has 2 as its channel size
-      # rpn_cls_score_reshape = self._reshape_layer(rpn_cls_score, 2, 'rpn_cls_score_reshape')
-      # rpn_cls_prob_reshape = self._softmax_layer(rpn_cls_score_reshape, "rpn_cls_prob_reshape")
-      # rpn_cls_prob = self._reshape_layer(rpn_cls_prob_reshape, self._num_anchors * 2, "rpn_cls_prob")
-
-      rpn_cls_score_shape = tf.shape(rpn_cls_score)
-      rpn_cls_score_reshape = tf.reshape(rpn_cls_score, shape=[rpn_cls_score_shape[0], rpn_cls_score_shape[1],
-                                                               rpn_cls_score_shape[2]*self._num_anchors, 2])
-      rpn_cls_prob = tf.nn.softmax(rpn_cls_score_reshape)
-      rpn_bbox_pred = slim.conv2d(rpn, self._num_anchors * 4, [1, 1], trainable=is_training,
-                                  weights_initializer=initializer_bbox,
-                                  padding='VALID', activation_fn=None, scope='rpn_bbox_pred')
       if (input_rois is None) and (roi_scores is None):
+          FLAGS = True
+          # build the anchors for the image
+          self._anchor_component()
+          # rpn
+          rpn = slim.conv2d(net_conv4, 512, [3, 3], trainable=is_training, weights_initializer=initializer,
+                            scope="rpn_conv/3x3")
+          self._act_summaries.append(rpn)
+          rpn_cls_score = slim.conv2d(rpn, self._num_anchors * 2, [1, 1], trainable=is_training,
+                                      weights_initializer=initializer,
+                                      padding='VALID', activation_fn=None, scope='rpn_cls_score')
+          rpn_cls_score_shape = tf.shape(rpn_cls_score)
+          rpn_cls_score_reshape = tf.reshape(rpn_cls_score, shape=[rpn_cls_score_shape[0], rpn_cls_score_shape[1],
+                                                                   rpn_cls_score_shape[2] * self._num_anchors, 2])
+          rpn_cls_prob = tf.nn.softmax(rpn_cls_score_reshape)
+          rpn_bbox_pred = slim.conv2d(rpn, self._num_anchors * 4, [1, 1], trainable=is_training,
+                                      weights_initializer=initializer_bbox,
+                                      padding='VALID', activation_fn=None, scope='rpn_bbox_pred')
           if is_training:
             rois, roi_scores = self._proposal_layer(rpn_cls_prob, rpn_bbox_pred, "rois")
             # rois_test, _ = self._proposal_layer(rpn_cls_prob, rpn_bbox_pred, "rois_test", 'TEST')
@@ -332,15 +328,16 @@ class resnetv1(Network):
       position_sensitive_bbox_feature = tf.add_n(bbox_target_crops)/len(bbox_target_crops)
       position_sensitive_bbox_feature = tf.reduce_mean(position_sensitive_bbox_feature, axis=[1, 2])
 
-    self._predictions["rpn_cls_score"] = rpn_cls_score
-    self._predictions["rpn_cls_score_reshape"] = rpn_cls_score_reshape
-    self._predictions["rpn_cls_prob"] = rpn_cls_prob
-    self._predictions["rpn_bbox_pred"] = rpn_bbox_pred
+    if FLAGS:
+        self._predictions["rpn_cls_score"] = rpn_cls_score
+        self._predictions["rpn_cls_score_reshape"] = rpn_cls_score_reshape
+        self._predictions["rpn_cls_prob"] = rpn_cls_prob
+        self._predictions["rpn_bbox_pred"] = rpn_bbox_pred
+        self._predictions["rois"] = rois
+        self._predictions["roi_scores"] = roi_scores
     self._predictions["cls_score"] = position_sensitive_classes
     self._predictions["cls_prob"] = cls_prob
     self._predictions["bbox_pred"] = position_sensitive_bbox_feature
-    self._predictions["rois"] = rois
-    self._predictions["roi_scores"] = roi_scores
 
     self._score_summaries.update(self._predictions)
 
@@ -348,22 +345,23 @@ class resnetv1(Network):
 
   def get_variables_to_restore(self, variables, var_keep_dic):
     variables_to_restore = {}
+    variables_to_restore_rfcn = {}
     for v in variables:
       # exclude the first conv layer to swap RGB to BGR
       if (v.name == ('rpn_network/'+self._resnet_scope + '/conv1/weights:0')) or (v.name == ('rfcn_network/'+self._resnet_scope + '/conv1/weights:0')):
         self._variables_to_fix[v.name] = v
         continue
       if 'rpn_network' in v.op.name:
-          print('var name is ', v.name.split(':')[0].replace('rpn_network/', ''))
+          # print('var name is ', v.name.split(':')[0].replace('rpn_network/', ''))
           if v.name.split(':')[0].replace('rpn_network/', '') in var_keep_dic:
             print('Varibles restored: %s' % v.name)
             variables_to_restore[v.name.split(':')[0].replace('rpn_network/', '')] = v
       if 'rfcn_network' in v.op.name:
-          print('var name is ', v.name.split(':')[0].replace('rpn_network/', ''))
+          # print('var name is ', v.name.split(':')[0].replace('rpn_network/', ''))
           if v.name.split(':')[0].replace('rfcn_network/', '') in var_keep_dic:
-            print('Varibles restored: %s' % v.name)
-            variables_to_restore[v.name.split(':')[0].replace('rpn_network/', '')] = v
-    return variables_to_restore
+            print('@Varibles restored: %s' % v.name)
+            variables_to_restore_rfcn[v.name.split(':')[0].replace('rfcn_network/', '')] = v
+    return variables_to_restore, variables_to_restore_rfcn
 
   def fix_variables(self, sess, pretrained_model):
     print('Fix Resnet V1 layers..')
@@ -374,7 +372,9 @@ class resnetv1(Network):
         restorer_fc = tf.train.Saver({self._resnet_scope + "/conv1/weights": conv1_rgb})
         restorer_fc.restore(sess, pretrained_model)
 
-        sess.run(tf.assign(self._variables_to_fix[self._resnet_scope + '/conv1/weights:0'],
+        sess.run(tf.assign(self._variables_to_fix['rpn_network/'+self._resnet_scope + '/conv1/weights:0'],
+                           tf.reverse(conv1_rgb, [2])))
+        sess.run(tf.assign(self._variables_to_fix['rfcn_network/'+self._resnet_scope + '/conv1/weights:0'],
                            tf.reverse(conv1_rgb, [2])))
 
   def _normalize_bbox(self, bottom, bbox, name):
