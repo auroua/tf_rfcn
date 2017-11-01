@@ -5,6 +5,7 @@
 |------------|:-----------------:|:--------------------:|:----------:|:---------:|:-------:|
 | conv5, a trous, strides=16 without ohem| 4 stages iteration as Faster RCNN|75.77|40k satge1 8k stage2 12k stage3 8k stage4 12k|model_A|reanet_101|
 | conv5, a trous, strides=16 without ohem| only training total_loss |76.35| 11k | model_B|resnet_101|
+
 `total_loss = loss_rpn_objectness + loss_rpn_bboxes + loss_rfcn_classes + loss_rfcn_bboxes`
 
 ##### Details:
