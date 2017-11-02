@@ -222,6 +222,21 @@ class Network(object):
     ))
     return loss_box
 
+  def _smooth_l1_loss_vector(self, bbox_pred, bbox_targets, bbox_inside_weights, bbox_outside_weights, sigma=1.0, dim=[1]):
+    sigma_2 = sigma ** 2
+    box_diff = bbox_pred - bbox_targets
+    in_box_diff = bbox_inside_weights * box_diff
+    abs_in_box_diff = tf.abs(in_box_diff)
+    smoothL1_sign = tf.stop_gradient(tf.to_float(tf.less(abs_in_box_diff, 1. / sigma_2)))
+    in_loss_box = tf.pow(in_box_diff, 2) * (sigma_2 / 2.) * smoothL1_sign \
+                  + (abs_in_box_diff - (0.5 / sigma_2)) * (1. - smoothL1_sign)
+    out_loss_box = bbox_outside_weights * in_loss_box
+    loss_box = tf.reduce_mean(tf.reduce_sum(
+      out_loss_box,
+      axis=dim
+    ))
+    return loss_box
+
   def _add_losses(self, sigma_rpn=3.0):
     with tf.variable_scope('loss_' + self._tag) as scope:
       # RPN, class loss
@@ -268,6 +283,66 @@ class Network(object):
       loss = cross_entropy + loss_box + rpn_cross_entropy + rpn_loss_box
       self._losses['total_loss'] = loss
 
+      self._event_summaries.update(self._losses)
+
+    return loss
+
+  def _add_losses_ohem(self, sigma_rpn=3.0):
+    with tf.variable_scope('loss_' + self._tag) as scope:
+      # RPN, class loss
+      rpn_cls_score = tf.reshape(self._predictions['rpn_cls_score_reshape'], [-1, 2])
+      rpn_label = tf.reshape(self._anchor_targets['rpn_labels'], [-1])
+      rpn_select = tf.where(tf.not_equal(rpn_label, -1))
+      rpn_cls_score = tf.reshape(tf.gather(rpn_cls_score, rpn_select), [-1, 2])
+      rpn_label = tf.reshape(tf.gather(rpn_label, rpn_select), [-1])
+      rpn_cross_entropy = tf.reduce_mean(
+        tf.nn.sparse_softmax_cross_entropy_with_logits(logits=rpn_cls_score, labels=rpn_label))
+
+      # RPN, bbox loss
+      rpn_bbox_pred = self._predictions['rpn_bbox_pred']
+      rpn_bbox_targets = self._anchor_targets['rpn_bbox_targets']
+      rpn_bbox_inside_weights = self._anchor_targets['rpn_bbox_inside_weights']
+      rpn_bbox_outside_weights = self._anchor_targets['rpn_bbox_outside_weights']
+
+      rpn_loss_box = self._smooth_l1_loss(rpn_bbox_pred, rpn_bbox_targets, rpn_bbox_inside_weights,
+                                          rpn_bbox_outside_weights, sigma=sigma_rpn, dim=[1, 2, 3])
+
+      # RCNN, class loss
+      cls_score = self._predictions["cls_score"]
+      label = tf.reshape(self._proposal_targets["labels"], [-1])
+
+      rfcn_cls_score = tf.nn.sparse_softmax_cross_entropy_with_logits(
+          logits=tf.reshape(cls_score, [-1, self._num_classes]), labels=label)
+
+      # RCNN, bbox loss
+      bbox_pred = self._predictions['bbox_pred']
+      bbox_targets = self._proposal_targets['bbox_targets']
+      bbox_inside_weights = self._proposal_targets['bbox_inside_weights']
+      bbox_outside_weights = self._proposal_targets['bbox_outside_weights']
+      loss_box_vector = self._smooth_l1_loss_vector(bbox_pred, bbox_targets, bbox_inside_weights, bbox_outside_weights)
+
+      # ohem
+      rois_boxes = self._proposal_targets['rois']
+      loss_before_nms = rfcn_cls_score + loss_box_vector
+      ohem_indexes = tf.image.non_max_suppression(rois_boxes[:, 1:5], loss_before_nms, cfg.TRAIN.OHEM_B, cfg.TRAIN.OHEM_NMS_THRESH)
+
+      rfcn_cls_score = tf.gather(rfcn_cls_score, ohem_indexes)
+      loss_box_vector = tf.gather(rfcn_cls_score, ohem_indexes)
+
+      cross_entropy = tf.reduce_mean(rfcn_cls_score)
+      loss_box = tf.reduce_mean(loss_box_vector)
+
+      self._losses['cross_entropy'] = cross_entropy
+      self._losses['loss_box'] = loss_box
+      self._losses['rpn_cross_entropy'] = rpn_cross_entropy
+      self._losses['rpn_loss_box'] = rpn_loss_box
+
+      self._losses['rpn_loss'] = rpn_loss_box + rpn_cross_entropy
+      self._losses['class_loss'] = cross_entropy + loss_box
+      loss = cross_entropy + loss_box + rpn_cross_entropy + rpn_loss_box
+      self._losses['total_loss'] = loss
+
+      self._losses['ohem_indexes_counts'] = ohem_indexes
       self._event_summaries.update(self._losses)
 
     return loss
@@ -389,7 +464,10 @@ class Network(object):
       self._predictions["bbox_pred"] *= stds
       self._predictions["bbox_pred"] += means
     else:
-      self._add_losses()
+      if cfg.TRAIN.OHEM:
+        self._add_losses_ohem()
+      else:
+        self._add_losses()
       # self._add_losses_center()
       layers_to_output.update(self._losses)
 
@@ -397,7 +475,10 @@ class Network(object):
     with tf.device("/cpu:0"):
       val_summaries.append(self._add_image_summary(self._image, self._gt_boxes))
       for key, var in self._event_summaries.items():
-        val_summaries.append(tf.summary.scalar(key, var))
+        if 'ohem' in key:
+          val_summaries.append(tf.summary.scalar(key, tf.shape(var)[0]))
+        else:
+          val_summaries.append(tf.summary.scalar(key, var))
       for key, var in self._score_summaries.items():
         self._add_score_summary(key, var)
       for var in self._act_summaries:

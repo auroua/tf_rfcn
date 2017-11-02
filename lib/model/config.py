@@ -33,6 +33,11 @@ __C.TRAIN.GAMMA = 0.1
 # Step size for reducing the learning rate, currently only support one step
 __C.TRAIN.STEPSIZE = 30000
 
+# whether to use ohem
+__C.TRAIN.OHEM = False
+__C.TRAIN.OHEM_B = 128
+__C.TRAIN.OHEM_NMS_THRESH = 0.7
+
 # Iteration intervals for showing the loss during training, on command line interface
 __C.TRAIN.DISPLAY = 10
 

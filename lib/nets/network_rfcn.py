@@ -331,6 +331,59 @@ class Network(object):
 
         return self._losses['rfcn_loss']
 
+    def _smooth_l1_loss_vector(self, bbox_pred, bbox_targets, bbox_inside_weights, bbox_outside_weights, sigma=1.0,
+                               dim=[1]):
+        sigma_2 = sigma ** 2
+        box_diff = bbox_pred - bbox_targets
+        in_box_diff = bbox_inside_weights * box_diff
+        abs_in_box_diff = tf.abs(in_box_diff)
+        smoothL1_sign = tf.stop_gradient(tf.to_float(tf.less(abs_in_box_diff, 1. / sigma_2)))
+        in_loss_box = tf.pow(in_box_diff, 2) * (sigma_2 / 2.) * smoothL1_sign \
+                      + (abs_in_box_diff - (0.5 / sigma_2)) * (1. - smoothL1_sign)
+        out_loss_box = bbox_outside_weights * in_loss_box
+        loss_box = tf.reduce_mean(tf.reduce_sum(
+            out_loss_box,
+            axis=dim
+        ))
+        return loss_box
+
+    def _add_rfcn_losses_ohem(self, sigma_rpn=3.0):
+        with tf.variable_scope('loss_' + self._tag) as scope:
+            # RCNN, class loss
+            cls_score = self._predictions["cls_score"]
+            label = tf.reshape(self._proposal_targets["labels"], [-1])
+            rfcn_cls_score = tf.nn.sparse_softmax_cross_entropy_with_logits(
+                logits=tf.reshape(cls_score, [-1, self._num_classes]), labels=label)
+
+            # RCNN, bbox loss
+            bbox_pred = self._predictions['bbox_pred']
+            bbox_targets = self._proposal_targets['bbox_targets']
+            bbox_inside_weights = self._proposal_targets['bbox_inside_weights']
+            bbox_outside_weights = self._proposal_targets['bbox_outside_weights']
+            loss_box_vector = self._smooth_l1_loss_vector(bbox_pred, bbox_targets, bbox_inside_weights,
+                                                          bbox_outside_weights)
+
+            # ohem
+            rois_boxes = self._proposal_targets['rois']
+            loss_before_nms = rfcn_cls_score + loss_box_vector
+            ohem_indexes = tf.image.non_max_suppression(rois_boxes[:, 1:5], loss_before_nms, cfg.TRAIN.OHEM_B,
+                                                        cfg.TRAIN.OHEM_NMS_THRESH)
+            rfcn_cls_score = tf.gather(rfcn_cls_score, ohem_indexes)
+            loss_box_vector = tf.gather(rfcn_cls_score, ohem_indexes)
+
+            cross_entropy = tf.reduce_mean(rfcn_cls_score)
+            loss_box = tf.reduce_mean(loss_box_vector)
+
+            self._losses['cross_entropy'] = cross_entropy
+            self._losses['loss_box'] = loss_box
+
+            self._losses['rfcn_loss'] = cross_entropy + loss_box
+            self._losses['ohem_indexes_counts'] = ohem_indexes
+
+            self._event_summaries.update(self._losses)
+
+        return self._losses['rfcn_loss']
+
     def center_loss(self, features, label, alfa, nrof_classes=2):
         """Center loss based on the paper "A Discriminative Feature Learning Approach for Deep Face Recognition"
        (http://ydwen.github.io/papers/WenECCV16.pdf)
@@ -489,9 +542,15 @@ class Network(object):
         else:
             if scope == 'rpn_network':
                 self._add_rpn_losses()
-                self._add_rfcn_losses()
+                if cfg.TRAIN.OHEM:
+                    self._add_rfcn_losses_ohem()
+                else:
+                    self._add_rfcn_losses()
             elif scope == 'rfcn_network':
-                self._add_rfcn_losses()
+                if cfg.TRAIN.OHEM:
+                    self._add_rfcn_losses_ohem()
+                else:
+                    self._add_rfcn_losses()
             # self._add_losses_center()
             layers_to_output.update(self._losses)
 
@@ -500,9 +559,14 @@ class Network(object):
         with tf.device("/cpu:0"):
             val_summaries.append(self._add_image_summary(self._image, self._gt_boxes, train_summaries))
             for key, var in self._event_summaries.items():
-                loss_summary_op = tf.summary.scalar('LOSS/'+scope+'/'+key, var)
-                val_summaries.append(loss_summary_op)
-                train_summaries.append(loss_summary_op)
+                if 'ohem' in key:
+                    loss_summary_op = tf.summary.scalar('LOSS/'+scope+'/'+key, tf.shape(var)[0])
+                    val_summaries.append(loss_summary_op)
+                    train_summaries.append(loss_summary_op)
+                else:
+                    loss_summary_op = tf.summary.scalar('LOSS/'+scope+'/'+key, var)
+                    val_summaries.append(loss_summary_op)
+                    train_summaries.append(loss_summary_op)
             for key, var in self._score_summaries.items():
                 self._add_score_summary(key, var, train_summaries)
             for var in self._act_summaries:

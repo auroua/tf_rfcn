@@ -37,7 +37,8 @@
 |model_B|https://pan.baidu.com/s/1i4QEVRZ|v9ua|
 
 ##### Tasks
-* OHEM
+* ohem
+* code refactor
 
 ##### References:
 > [tf-faster-rcnn](https://github.com/endernewton/tf-faster-rcnn)
@@ -46,3 +47,5 @@
 
 > [R-FCN: Object Detection via
 Region-based Fully Convolutional Networks](https://arxiv.org/pdf/1605.06409.pdf)
+
+> [An Implementation of Faster RCNN with Study for Region Sampling](https://arxiv.org/pdf/1702.02138.pdf)

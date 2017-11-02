@@ -277,8 +277,10 @@ class resnetv1(Network):
       # rfcn   a 1024 1*1 conv layer
       rfcn_net = slim.conv2d(net_conv4, 1024, [1, 1], padding='SAME',
                              weights_initializer=tf.random_normal_initializer(stddev=0.01),
-                             weights_regularizer=slim.l2_regularizer(scale=0.0005), scope='reduce_depth',
-                             activation_fn=tf.nn.relu)
+                             weights_regularizer=slim.l2_regularizer(scale=0.0005), scope='refined_reduce_depth',
+                             # old version
+                             # weights_regularizer=slim.l2_regularizer(scale=0.0005), scope='reduce_depth',
+                            activation_fn=tf.nn.relu)
       # generate k*k*(C+1) score maps
       rfcn_net_classes = slim.conv2d(rfcn_net, cfg.K*cfg.K*(20+1), [1, 1], weights_initializer=tf.random_normal_initializer(stddev=0.01),
                              weights_regularizer=slim.l2_regularizer(scale=0.0005), scope='refined_classes',

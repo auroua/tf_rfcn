@@ -105,8 +105,6 @@ class SolverWrapper(object):
                                             anchor_ratios=cfg.ANCHOR_RATIOS)
       # Define the loss
       loss = layers['total_loss']
-      rpn_loss = layers['rpn_loss']
-      class_loss = layers['class_loss']
       # Set learning rate and momentum
       lr = tf.Variable(cfg.TRAIN.LEARNING_RATE, trainable=False)
       momentum = cfg.TRAIN.MOMENTUM
@@ -229,7 +227,7 @@ class SolverWrapper(object):
         # rpn_loss_cls, rpn_loss_box, loss_cls, loss_box, center_loss, total_loss, summary = \
         #   self.net.train_step_with_summary_center(sess, blobs, train_op)
 
-
+        # self.writer.flush()
         self.writer.add_summary(summary, float(iter))
         # Also check the summary on the validation set
         blobs_val = self.data_layer_val.forward()
