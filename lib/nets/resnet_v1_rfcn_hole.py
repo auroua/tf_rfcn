@@ -169,7 +169,6 @@ class resnetv1(Network):
       net = resnet_utils.conv2d_same(self._image, 64, 7, stride=2, scope='conv1')
       net = tf.pad(net, [[0, 0], [1, 1], [1, 1], [0, 0]])
       net = slim.max_pool2d(net, [3, 3], stride=2, padding='VALID', scope='pool1')
-
     return net
 
   def build_network(self, sess, is_training=True):
@@ -265,7 +264,10 @@ class resnetv1(Network):
         rpn_labels = self._anchor_target_layer(rpn_cls_score, "anchor")
         # Try to have a determinestic order for the computing graph, for reproducibility
         with tf.control_dependencies([rpn_labels]):
-          rois, _ = self._proposal_target_layer(rois, roi_scores, "rpn_rois")
+          if cfg.TRAIN.OHEM:
+            rois, _ = self._proposal_target_layer_ohem(rois, roi_scores, "rpn_rois")
+          else:
+            rois, _ = self._proposal_target_layer(rois, roi_scores, "rpn_rois")
       else:
         if cfg.TEST.MODE == 'nms':
           rois, _ = self._proposal_layer(rpn_cls_prob, rpn_bbox_pred, "rois")

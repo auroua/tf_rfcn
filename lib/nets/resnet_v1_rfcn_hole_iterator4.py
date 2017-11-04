@@ -267,7 +267,10 @@ class resnetv1(Network):
             rpn_labels = self._anchor_target_layer(rpn_cls_score, "anchor")
             # Try to have a determinestic order for the computing graph, for reproducibility
             with tf.control_dependencies([rpn_labels]):
-              rois, _ = self._proposal_target_layer(rois, roi_scores, "rpn_rois")
+                if cfg.TRAIN.OHEM:
+                    rois, _ = self._proposal_target_layer_ohem(rois, roi_scores, "rpn_rois")
+                else:
+                    rois, _ = self._proposal_target_layer(rois, roi_scores, "rpn_rois")
           else:
             if cfg.TEST.MODE == 'nms':
               rois, _ = self._proposal_layer(rpn_cls_prob, rpn_bbox_pred, "rois")

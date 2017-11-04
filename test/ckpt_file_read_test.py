@@ -6,15 +6,17 @@ from tensorflow.python import pywrap_tensorflow
 if __name__ == '__main__':
     # ckpt_path = '/home/aurora/workspaces/PycharmProjects/tensorflow/tf_rfcn/output/res101/voc_2007_trainval+voc_2012_' \
     #             'trainval/default/res101_faster_rcnn_iter_10.ckpt'
+    # ckpt_path = '/home/aurora/workspaces/PycharmProjects/tensorflow/tf_rfcn/output/res101/voc_2007_trainval+voc_2012_' \
+    #             'trainval/default/res101_faster_rcnn_iter_400000.ckpt'
     ckpt_path = '/home/aurora/workspaces/PycharmProjects/tensorflow/tf_rfcn/output/res101/voc_2007_trainval+voc_2012_' \
-                'trainval/default/res101_faster_rcnn_iter_400000.ckpt'
+                'trainval/default/res101_faster_rcnn_iter_20000.ckpt'
     try:
         reader = pywrap_tensorflow.NewCheckpointReader(ckpt_path)
         var_to_shape_map = reader.get_variable_to_shape_map()
         count = 0
         for key in var_to_shape_map:
             # if 'rfcn_network/resnet_v1_101' in key and 'rfcn_network/resnet_v1_101/block' not in key:
-            if 'rpn_network/resnet_v1_101/block2/unit_1' in key:
+            # if 'rpn_network/resnet_v1_101/block2/unit_1' in key:
             # if 'resnet_v1_101/conv1' in key:
                 print(key)
                 count += 1

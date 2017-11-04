@@ -19,6 +19,7 @@ from layer_utils.proposal_layer import proposal_layer
 from layer_utils.proposal_top_layer import proposal_top_layer
 from layer_utils.anchor_target_layer import anchor_target_layer
 from layer_utils.proposal_target_layer import proposal_target_layer
+from layer_utils.proposal_target_layer_ohem import proposal_target_layer_ohem
 
 from model.config import cfg
 
@@ -173,6 +174,30 @@ class Network(object):
         with tf.variable_scope(name) as scope:
             rois, roi_scores, labels, bbox_targets, bbox_inside_weights, bbox_outside_weights = tf.py_func(
                 proposal_target_layer,
+                [rois, roi_scores, self._gt_boxes, self._num_classes],
+                [tf.float32, tf.float32, tf.float32, tf.float32, tf.float32, tf.float32])
+
+            rois.set_shape([cfg.TRAIN.BATCH_SIZE, 5])
+            roi_scores.set_shape([cfg.TRAIN.BATCH_SIZE])
+            labels.set_shape([cfg.TRAIN.BATCH_SIZE, 1])
+            bbox_targets.set_shape([cfg.TRAIN.BATCH_SIZE, self._num_classes * 4])
+            bbox_inside_weights.set_shape([cfg.TRAIN.BATCH_SIZE, self._num_classes * 4])
+            bbox_outside_weights.set_shape([cfg.TRAIN.BATCH_SIZE, self._num_classes * 4])
+
+            self._proposal_targets['rois'] = rois
+            self._proposal_targets['labels'] = tf.to_int32(labels, name="to_int32")
+            self._proposal_targets['bbox_targets'] = bbox_targets
+            self._proposal_targets['bbox_inside_weights'] = bbox_inside_weights
+            self._proposal_targets['bbox_outside_weights'] = bbox_outside_weights
+
+            self._score_summaries.update(self._proposal_targets)
+
+            return rois, roi_scores
+
+    def _proposal_target_layer_ohem(self, rois, roi_scores, name):
+        with tf.variable_scope(name) as scope:
+            rois, roi_scores, labels, bbox_targets, bbox_inside_weights, bbox_outside_weights = tf.py_func(
+                proposal_target_layer_ohem,
                 [rois, roi_scores, self._gt_boxes, self._num_classes],
                 [tf.float32, tf.float32, tf.float32, tf.float32, tf.float32, tf.float32])
 
@@ -580,14 +605,6 @@ class Network(object):
                 if 'rpn_network' not in key.op.name:
                     # print('#############'*3)
                     train_summaries2.append(key)
-        # print('##########'*10)
-        # summarys = []
-        # for key in tf.get_collection(tf.GraphKeys.SUMMARIES):
-        #     if scope in key.op.name:
-        #         print(key)
-        #         summarys.append(key)
-        # print('##########' * 10)
-        # # self._summary_op = tf.summary.merge_all()
         if len(train_summaries2) > 0:
             self._summary_op = tf.summary.merge(train_summaries2)
         else:
