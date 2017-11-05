@@ -515,7 +515,8 @@ class Network(object):
         return vars
 
     def create_architecture(self, sess, mode, num_classes, scope, tag=None,
-                            anchor_scales=(8, 16, 32), anchor_ratios=(0.5, 1, 2), input_rois=None, roi_scores=None):
+                            anchor_scales=(8, 16, 32), anchor_ratios=(0.5, 1, 2), input_rois=None, roi_scores=None,
+                            proposal_targets=None):
         self._image = tf.placeholder(tf.float32, shape=[self._batch_size, None, None, 3])
         self._im_info = tf.placeholder(tf.float32, shape=[self._batch_size, 3])
         self._gt_boxes = tf.placeholder(tf.float32, shape=[None, 5])
@@ -551,6 +552,13 @@ class Network(object):
                        biases_initializer=tf.constant_initializer(0.0)):
             with tf.variable_scope(scope):
                 rois, cls_prob, bbox_pred = self.build_network(sess, input_rois, roi_scores, training)
+
+        if proposal_targets is not None:
+            self._proposal_targets['rois'] = proposal_targets['rois']
+            self._proposal_targets['labels'] = proposal_targets['labels']
+            self._proposal_targets['bbox_targets'] = proposal_targets['bbox_targets']
+            self._proposal_targets['bbox_inside_weights'] = proposal_targets['bbox_inside_weights']
+            self._proposal_targets['bbox_outside_weights'] = proposal_targets['bbox_outside_weights']
 
         layers_to_output = {'rois': rois}
         layers_to_output.update(self._predictions)
@@ -612,7 +620,7 @@ class Network(object):
         if not testing:
             self._summary_op_val = tf.summary.merge(val_summaries)
 
-        return layers_to_output
+        return layers_to_output, self._proposal_targets
 
     def get_variables_to_restore(self, variables, var_keep_dic):
         raise NotImplementedError

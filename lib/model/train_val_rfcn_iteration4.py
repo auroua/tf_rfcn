@@ -100,14 +100,15 @@ class SolverWrapper(object):
       # Set the random seed for tensorflow
       tf.set_random_seed(cfg.RNG_SEED)
       # Build the main computation graph
-      rpn_layers = self.net.create_architecture(sess, 'TRAIN', self.imdb.num_classes, scope='rpn_network', tag='default',
+      rpn_layers, proposal_targets = self.net.create_architecture(sess, 'TRAIN', self.imdb.num_classes, scope='rpn_network', tag='default',
                                             anchor_scales=cfg.ANCHOR_SCALES,
                                             anchor_ratios=cfg.ANCHOR_RATIOS)
-      rfcn_layers = self.rfcn_network.create_architecture(sess, 'TRAIN', self.imdb.num_classes, scope='rfcn_network', tag='default',
+      rfcn_layers, _ = self.rfcn_network.create_architecture(sess, 'TRAIN', self.imdb.num_classes, scope='rfcn_network', tag='default',
                                             anchor_scales=cfg.ANCHOR_SCALES,
                                             anchor_ratios=cfg.ANCHOR_RATIOS,
                                             input_rois=rpn_layers['rois'],
-                                            roi_scores=rpn_layers['roi_scores'])
+                                            roi_scores=rpn_layers['roi_scores'],
+                                            proposal_targets=proposal_targets)
 
       # Define the loss
       rpn_loss = rpn_layers['rpn_loss']
@@ -226,6 +227,7 @@ class SolverWrapper(object):
     stage_infor = ''
     # while iter < max_iters + 1:
     while iter < 200001:
+    # while iter < 201:
       # Learning rate
       if iter == 80001:
       # if iter == 81:
@@ -310,6 +312,7 @@ class SolverWrapper(object):
       iter += 1
 
     if iter <= 200001:
+    # if iter <= 201:
       ###############################################
       #####  merge rfcn_network to rpn_network  #####
       ###############################################
@@ -339,6 +342,7 @@ class SolverWrapper(object):
     sess.run(tf.assign(lr, cfg.TRAIN.LEARNING_RATE))
     # while iter < max_iters + 1:
     while iter < 400001:
+    # while iter < 401:
         if iter == 280001:
         # if iter == 261:
           # Add snapshot here before reducing the learning rate
@@ -376,7 +380,7 @@ class SolverWrapper(object):
             self.valwriter_stage3.close()
         # stage 4 training rfcn layer only in rpn network rfcn layers
         elif 280001 <= iter < 400001:
-        # elif 280001 <= iter < 1401:
+        # elif 581 <= iter < 1401:
           stage_infor = 'stage4'
           if iter == 360001:
           # if iter == 1361:

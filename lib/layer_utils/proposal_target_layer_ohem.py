@@ -104,23 +104,31 @@ def _sample_rois(all_rois, all_scores, gt_boxes, num_classes):
   bg_inds = np.where((max_overlaps < cfg.TRAIN.BG_THRESH_HI) &
                      (max_overlaps >= cfg.TRAIN.BG_THRESH_LO))[0]
 
+  # Small modification to the original version where we ensure a fixed number of regions are sampled
+  if fg_inds.size > 0 and bg_inds.size > 0:
+    fg_inds = npr.choice(fg_inds, size=int(fg_inds.size), replace=False)
+    fg_rois_per_image = fg_inds.size
+    bg_rois_per_image = cfg.TRAIN.BATCH_SIZE - fg_inds.size
+    to_replace = bg_inds.size < bg_rois_per_image
+    bg_inds = npr.choice(bg_inds, size=int(bg_rois_per_image), replace=to_replace)
+  elif fg_inds.size > 0:
+    to_replace = fg_inds.size < cfg.TRAIN.BATCH_SIZE
+    fg_inds = npr.choice(fg_inds, size=int(cfg.TRAIN.BATCH_SIZE), replace=to_replace)
+    fg_rois_per_image = cfg.TRAIN.BATCH_SIZE
+  elif bg_inds.size > 0:
+    to_replace = bg_inds.size < cfg.TRAIN.BATCH_SIZE
+    bg_inds = npr.choice(bg_inds, size=int(cfg.TRAIN.BATCH_SIZE), replace=to_replace)
+    fg_rois_per_image = 0
+  else:
+    import pdb
+    pdb.set_trace()
+
   # The indices that we're selecting (both fg and bg)
   keep_inds = np.append(fg_inds, bg_inds)
-
-  if keep_inds.size >= cfg.TRAIN.BATCH_SIZE:
-    keep_inds_indexes = npr.choice(range(keep_inds.size), size=cfg.TRAIN.BATCH_SIZE, replace=False)
-    keep_inds = keep_inds[keep_inds_indexes]
-    masks = keep_inds_indexes > (keep_inds.size - 1)
-  else:
-    keep_inds_indexes = npr.choice(range(keep_inds.size), size=cfg.TRAIN.BATCH_SIZE, replace=True)
-    keep_inds = keep_inds[keep_inds_indexes]
-    masks = keep_inds_indexes > (keep_inds.size - 1)
-
   # Select sampled values from various arrays:
-
-  # Clamp labels for the background RoIs to 0
   labels = labels[keep_inds]
-  labels[masks] = 0
+  # Clamp labels for the background RoIs to 0
+  labels[int(fg_rois_per_image):] = 0
   rois = all_rois[keep_inds]
   roi_scores = all_scores[keep_inds]
 

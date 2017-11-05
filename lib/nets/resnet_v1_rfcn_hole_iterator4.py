@@ -263,7 +263,6 @@ class resnetv1(Network):
                                       padding='VALID', activation_fn=None, scope='rpn_bbox_pred')
           if is_training:
             rois, roi_scores = self._proposal_layer(rpn_cls_prob, rpn_bbox_pred, "rois")
-            # rois_test, _ = self._proposal_layer(rpn_cls_prob, rpn_bbox_pred, "rois_test", 'TEST')
             rpn_labels = self._anchor_target_layer(rpn_cls_score, "anchor")
             # Try to have a determinestic order for the computing graph, for reproducibility
             with tf.control_dependencies([rpn_labels]):
@@ -280,7 +279,12 @@ class resnetv1(Network):
               raise NotImplementedError
       elif (input_rois is not None) and (roi_scores is not None):
           rois = input_rois
-          rois, _ = self._proposal_target_layer(rois, roi_scores, "rpn_rois")
+          self._proposal_targets['rois'] = rois
+          # rois_shape = tf.shape(rois)
+          # if cfg.TRAIN.OHEM:
+          #     rois, _ = self._proposal_target_layer_ohem(rois, roi_scores, "rpn_rois")
+          # else:
+          #     rois, _ = self._proposal_target_layer(rois, roi_scores, "rpn_rois")
       else:
           raise ValueError('rpn cls prob and rpn bbox pred have troubles')
 
@@ -336,8 +340,9 @@ class resnetv1(Network):
         self._predictions["rpn_cls_score_reshape"] = rpn_cls_score_reshape
         self._predictions["rpn_cls_prob"] = rpn_cls_prob
         self._predictions["rpn_bbox_pred"] = rpn_bbox_pred
-        self._predictions["rois"] = rois
         self._predictions["roi_scores"] = roi_scores
+    self._predictions["rois"] = rois
+    self._predictions["rois_shape"] = tf.shape(rois)
     self._predictions["cls_score"] = position_sensitive_classes
     self._predictions["cls_prob"] = cls_prob
     self._predictions["bbox_pred"] = position_sensitive_bbox_feature
