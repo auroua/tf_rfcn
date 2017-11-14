@@ -113,7 +113,6 @@ class Network(object):
                                     [tf.float32, tf.float32])
       rois.set_shape([None, 5])
       rpn_scores.set_shape([None, 1])
-
     return rois, rpn_scores
 
   # Only use it if you have roi_pooling op written in tf.image
@@ -215,6 +214,7 @@ class Network(object):
 
       return rois, roi_scores
 
+
   def _anchor_component(self):
     with tf.variable_scope('ANCHOR_' + self._tag) as scope:
       # just to get the shape right
@@ -255,11 +255,16 @@ class Network(object):
     smoothL1_sign = tf.stop_gradient(tf.to_float(tf.less(abs_in_box_diff, 1. / sigma_2)))
     in_loss_box = tf.pow(in_box_diff, 2) * (sigma_2 / 2.) * smoothL1_sign \
                   + (abs_in_box_diff - (0.5 / sigma_2)) * (1. - smoothL1_sign)
+    # in_loss_box = in_box_diff**2 * (sigma_2 / 2.) * smoothL1_sign \
+    #               + (abs_in_box_diff - (0.5 / sigma_2)) * (1. - smoothL1_sign)
     out_loss_box = bbox_outside_weights * in_loss_box
-    loss_box = tf.reduce_mean(tf.reduce_sum(
-      out_loss_box,
-      axis=dim
-    ))
+    # loss_box = tf.reduce_mean(tf.reduce_sum(
+    #   out_loss_box,
+    #   axis=dim
+    # ))
+    loss_box = tf.reduce_mean(out_loss_box, axis=1)
+    loss_box = tf.Print(loss_box, [tf.shape(bbox_pred), tf.shape(bbox_targets), tf.shape(bbox_inside_weights),
+                                   tf.shape(box_diff), tf.shape(in_box_diff), tf.shape(smoothL1_sign)], 'smooth l1 loss outputs')
     return loss_box
 
   def _add_losses(self, sigma_rpn=3.0):
@@ -312,7 +317,7 @@ class Network(object):
 
     return loss
 
-  def _add_losses_ohem(self, sigma_rpn=3.0):
+  def _add_losses_ohem_nms(self, sigma_rpn=3.0):
     with tf.variable_scope('loss_' + self._tag) as scope:
       # RPN, class loss
       rpn_cls_score = tf.reshape(self._predictions['rpn_cls_score_reshape'], [-1, 2])
@@ -352,7 +357,7 @@ class Network(object):
       ohem_indexes = tf.image.non_max_suppression(rois_boxes[:, 1:5], loss_before_nms, cfg.TRAIN.OHEM_B, cfg.TRAIN.OHEM_NMS_THRESH)
 
       rfcn_cls_score = tf.gather(rfcn_cls_score, ohem_indexes)
-      loss_box_vector = tf.gather(rfcn_cls_score, ohem_indexes)
+      loss_box_vector = tf.gather(loss_box_vector, ohem_indexes)
 
       cross_entropy = tf.reduce_mean(rfcn_cls_score)
       loss_box = tf.reduce_mean(loss_box_vector)
@@ -371,6 +376,154 @@ class Network(object):
       self._event_summaries.update(self._losses)
 
     return loss
+
+  def _add_losses_ohem_topk(self, sigma_rpn=3.0):
+    with tf.variable_scope('loss_' + self._tag) as scope:
+      # RPN, class loss
+      rpn_cls_score = tf.reshape(self._predictions['rpn_cls_score_reshape'], [-1, 2])
+      rpn_label = tf.reshape(self._anchor_targets['rpn_labels'], [-1])
+      rpn_select = tf.where(tf.not_equal(rpn_label, -1))
+      rpn_cls_score = tf.reshape(tf.gather(rpn_cls_score, rpn_select), [-1, 2])
+      rpn_label = tf.reshape(tf.gather(rpn_label, rpn_select), [-1])
+      rpn_cross_entropy = tf.reduce_mean(
+        tf.nn.sparse_softmax_cross_entropy_with_logits(logits=rpn_cls_score, labels=rpn_label))
+
+      # RPN, bbox loss
+      rpn_bbox_pred = self._predictions['rpn_bbox_pred']
+      rpn_bbox_targets = self._anchor_targets['rpn_bbox_targets']
+      rpn_bbox_inside_weights = self._anchor_targets['rpn_bbox_inside_weights']
+      rpn_bbox_outside_weights = self._anchor_targets['rpn_bbox_outside_weights']
+
+      rpn_loss_box = self._smooth_l1_loss(rpn_bbox_pred, rpn_bbox_targets, rpn_bbox_inside_weights,
+                                          rpn_bbox_outside_weights, sigma=sigma_rpn, dim=[1, 2, 3])
+
+      # RCNN, class loss
+      cls_score = self._predictions["cls_score"]
+      label = tf.reshape(self._proposal_targets["labels"], [-1])
+
+      rfcn_cls_score = tf.nn.sparse_softmax_cross_entropy_with_logits(
+          logits=tf.reshape(cls_score, [-1, self._num_classes]), labels=label)
+
+      # RCNN, bbox loss
+      bbox_pred = self._predictions['bbox_pred']
+      bbox_targets = self._proposal_targets['bbox_targets']
+      bbox_inside_weights = self._proposal_targets['bbox_inside_weights']
+      bbox_outside_weights = self._proposal_targets['bbox_outside_weights']
+      loss_box_vector = self._smooth_l1_loss_vector(bbox_pred, bbox_targets, bbox_inside_weights, bbox_outside_weights)
+
+      # ohem
+      loss_before_nms = rfcn_cls_score + loss_box_vector
+      top_values, top_indexes = tf.nn.top_k(loss_before_nms, k=cfg.TRAIN.OHEM_B)
+
+      rfcn_cls_score = tf.gather(rfcn_cls_score, top_indexes)
+      loss_box_vector = tf.gather(loss_box_vector, top_indexes)
+
+      cross_entropy = tf.reduce_mean(rfcn_cls_score)
+      loss_box = tf.reduce_mean(loss_box_vector)
+
+      self._losses['cross_entropy'] = cross_entropy
+      self._losses['loss_box'] = loss_box
+      self._losses['rpn_cross_entropy'] = rpn_cross_entropy
+      self._losses['rpn_loss_box'] = rpn_loss_box
+
+      self._losses['rpn_loss'] = rpn_loss_box + rpn_cross_entropy
+      self._losses['class_loss'] = cross_entropy + loss_box
+      loss = cross_entropy + loss_box + rpn_cross_entropy + rpn_loss_box
+      self._losses['total_loss'] = loss
+
+      self._losses['ohem_indexes_counts'] = top_indexes
+      self._event_summaries.update(self._losses)
+
+    return loss
+
+  def focal_loss(onehot_labels, cls_preds,
+                 alpha=0.25, gamma=2.0, name=None, scope=None):
+    """Compute softmax focal loss between logits and onehot labels
+    logits and onehot_labels must have same shape [batchsize, num_classes] and
+    the same data type (float16, 32, 64)
+    Args:
+      onehot_labels: Each row labels[i] must be a valid probability distribution
+      cls_preds: Unscaled log probabilities
+      alpha: The hyperparameter for adjusting biased samples, default is 0.25
+      gamma: The hyperparameter for penalizing the easy labeled samples
+      name: A name for the operation (optional)
+    Returns:
+      A 1-D tensor of length batch_size of same type as logits with softmax focal loss
+    """
+    with tf.name_scope(scope, 'focal_loss', [cls_preds, onehot_labels]) as sc:
+      logits = tf.convert_to_tensor(cls_preds)
+      onehot_labels = tf.convert_to_tensor(onehot_labels)
+
+      precise_logits = tf.cast(logits, tf.float32) if (
+        logits.dtype == tf.float16) else logits
+      onehot_labels = tf.cast(onehot_labels, precise_logits.dtype)
+      predictions = tf.nn.sigmoid(logits)
+      predictions_pt = tf.where(tf.equal(onehot_labels, 1), predictions, 1. - predictions)
+      # add small value to avoid 0
+      epsilon = 1e-8
+      alpha_t = tf.scalar_mul(alpha, tf.ones_like(onehot_labels, dtype=tf.float32))
+      alpha_t = tf.where(tf.equal(onehot_labels, 1.0), alpha_t, 1 - alpha_t)
+      losses = tf.reduce_sum(
+        -alpha_t * tf.pow(1. - predictions_pt, gamma) * onehot_labels * tf.log(predictions_pt + epsilon),
+        name=name, axis=1)
+      return losses
+
+  def _add_focal_losses(self, sigma_rpn=3.0):
+    with tf.variable_scope('loss_' + self._tag) as scope:
+      # RPN, class loss
+      rpn_cls_score = tf.reshape(self._predictions['rpn_cls_score_reshape'], [-1, 2])
+      rpn_label = tf.reshape(self._anchor_targets['rpn_labels'], [-1])
+      rpn_select = tf.where(tf.not_equal(rpn_label, -1))
+      rpn_cls_score = tf.reshape(tf.gather(rpn_cls_score, rpn_select), [-1, 2])
+      rpn_label = tf.reshape(tf.gather(rpn_label, rpn_select), [-1])
+      rpn_cross_entropy = tf.reduce_mean(
+        tf.nn.sparse_softmax_cross_entropy_with_logits(logits=rpn_cls_score, labels=rpn_label))
+
+      # RPN, bbox loss
+      rpn_bbox_pred = self._predictions['rpn_bbox_pred']
+      rpn_bbox_targets = self._anchor_targets['rpn_bbox_targets']
+      rpn_bbox_inside_weights = self._anchor_targets['rpn_bbox_inside_weights']
+      rpn_bbox_outside_weights = self._anchor_targets['rpn_bbox_outside_weights']
+
+      rpn_loss_box = self._smooth_l1_loss(rpn_bbox_pred, rpn_bbox_targets, rpn_bbox_inside_weights,
+                                          rpn_bbox_outside_weights, sigma=sigma_rpn, dim=[1, 2, 3])
+
+      # RCNN, class loss
+      alpha_scale = 0.25
+      gamma = 2
+      epsilon = 1e-8
+      cls_score = self._predictions["cls_score"]
+      label = tf.reshape(self._proposal_targets["labels"], [-1])
+      label = tf.one_hot(label, depth=self._num_classes)
+      cls_pred = tf.nn.sigmoid(cls_score)
+      predictions_pt = tf.where(tf.equal(label, 1), cls_pred, 1-cls_pred)
+      alpha_t = tf.ones_like(label, dtype=tf.float32)
+      alpha_t = tf.scalar_mul(alpha_scale, alpha_t)
+      alpha_t = tf.where(tf.equal(label, 1.0), alpha_t, 1. - alpha_t)
+      cross_entropy = tf.reduce_mean(-alpha_t*tf.pow(1 - predictions_pt, gamma)*tf.log(predictions_pt + epsilon))
+
+      # RCNN, bbox loss
+      bbox_pred = self._predictions['bbox_pred']
+      bbox_targets = self._proposal_targets['bbox_targets']
+      bbox_inside_weights = self._proposal_targets['bbox_inside_weights']
+      bbox_outside_weights = self._proposal_targets['bbox_outside_weights']
+
+      loss_box = self._smooth_l1_loss(bbox_pred, bbox_targets, bbox_inside_weights, bbox_outside_weights)
+
+      self._losses['cross_entropy'] = cross_entropy
+      self._losses['loss_box'] = loss_box
+      self._losses['rpn_cross_entropy'] = rpn_cross_entropy
+      self._losses['rpn_loss_box'] = rpn_loss_box
+
+      self._losses['rpn_loss'] = rpn_loss_box + rpn_cross_entropy
+      self._losses['class_loss'] = cross_entropy + loss_box
+      loss = cross_entropy + loss_box + rpn_cross_entropy + rpn_loss_box
+      self._losses['total_loss'] = loss
+
+      self._event_summaries.update(self._losses)
+
+    return loss
+
 
   def center_loss(self, features, label, alfa, nrof_classes=2):
     """Center loss based on the paper "A Discriminative Feature Learning Approach for Deep Face Recognition"
@@ -489,11 +642,15 @@ class Network(object):
       self._predictions["bbox_pred"] *= stds
       self._predictions["bbox_pred"] += means
     else:
-      if cfg.TRAIN.OHEM:
-        self._add_losses_ohem()
+      if cfg.FOCAL_LOSS:
+        self._add_focal_losses()
       else:
-        self._add_losses()
-      # self._add_losses_center()
+        if cfg.TRAIN.OHEM:
+          # self._add_losses_ohem_topk()
+          self._add_losses_ohem_nms()
+        else:
+          self._add_losses()
+          # self._add_losses_center()
       layers_to_output.update(self._losses)
 
     val_summaries = []

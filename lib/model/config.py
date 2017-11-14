@@ -279,8 +279,12 @@ __C.ANCHOR_SCALES = [8, 16, 32]
 __C.ANCHOR_RATIOS = [0.5,1,2]
 
 
+__C.FOCAL_LOSS = False
+
 # RFCN grid size
 __C.K = 3
+
+__C.CLASSES = 21
 
 def get_output_dir(imdb, weights_filename):
   """Return the directory where experimental artifacts are placed.

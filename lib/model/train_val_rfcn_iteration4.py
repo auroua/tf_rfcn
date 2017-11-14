@@ -341,11 +341,14 @@ class SolverWrapper(object):
     # stage 3 and stage 4
     sess.run(tf.assign(lr, cfg.TRAIN.LEARNING_RATE))
     # while iter < max_iters + 1:
-    while iter < 400001:
+    while iter < 480001:
     # while iter < 401:
         if iter == 280001:
         # if iter == 261:
           # Add snapshot here before reducing the learning rate
+          self.snapshot(sess, iter)
+          sess.run(tf.assign(lr, 0.001))
+        if iter == 400001:
           self.snapshot(sess, iter)
           sess.run(tf.assign(lr, 0.001))
 
@@ -405,6 +408,33 @@ class SolverWrapper(object):
           if iter == 400000:
             self.writer_stage4.close()
             self.valwriter_stage4.close()
+        elif 400001 <= iter < 480001:
+          # if 401 <= iter < 481:
+          stage_infor = 'stage5'
+          # if iter == 461:
+          if iter == 460001:
+            self.snapshot(sess, iter)
+            sess.run(tf.assign(lr, 0.0001))
+          timer.tic()
+          now = time.time()
+          if now - last_summary_time > cfg.TRAIN.SUMMARY_INTERVAL:
+            # Compute the graph with summary
+            rpn_loss_cls, rpn_loss_box, loss_cls, loss_box, total_loss, summary = \
+              self.net.train_rpn_step_with_summary(sess, blobs, train_op_stage3)
+            self.writer_stage3.add_summary(summary, float(iter))
+            # Also check the summary on the validation set
+            blobs_val = self.data_layer_val.forward()
+            summary_val = self.net.get_summary(sess, blobs_val)
+            self.valwriter_stage3.add_summary(summary_val, float(iter))
+            last_summary_time = now
+          else:
+            # Compute the graph without summary
+            rpn_loss_cls, rpn_loss_box, loss_cls, loss_box, total_loss = \
+              self.net.train_rpn_step(sess, blobs, train_op_stage3)
+          timer.toc()
+          if iter == 480000:
+            self.writer_stage3.close()
+            self.valwriter_stage3.close()
         else:
           raise ValueError('iter is not allowed')
 

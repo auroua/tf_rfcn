@@ -5,6 +5,7 @@
 |------------|:-----------------:|:--------------------:|:----------:|:---------:|:-------:|
 | conv5, a trous, strides=16 without ohem| 4 stages iteration as Faster RCNN|75.77|total steps 400k satge1 80k stage2 120k stage3 80k stage4 120k|model_A|resnet_101|
 | conv5, a trous, strides=16 without ohem| only training total_loss |76.35| 110k | model_B|resnet_101|
+| local position sensitive + global roi  | only training total_loss |77.21| 110k | model_C|resnet_101|
 
 `total_loss = loss_rpn_objectness + loss_rpn_bboxes + loss_rfcn_classes + loss_rfcn_bboxes`
 
@@ -13,6 +14,7 @@
 |:-----:|:-----:|:-----:|:-----:|:-----:|:-----:|:-----:|:-----:|:-----:|:-----:|:-----:|:-----:|:-----:|:-----:|:-----:|:-----:|:-----:|:-----:|:-----:|:-----:|:-----:|
 |model_A|0.8008|0.8004|0.7861|0.6579|0.4836|0.8646|0.8531|0.8774|0.6081|0.8517|0.6935|0.8884|0.8616|0.7821|0.7805|0.4693|0.7814|0.7742|0.7845|0.7516|
 |model_B|0.8020|0.7940|0.7877|0.6402|0.6571|0.8599|0.8578|0.8736|0.6183|0.8223|0.6492|0.8728|0.8447|0.8201|0.7888|0.4607|0.7703|0.7558|0.8354|0.7596|
+|model_C|0.7885|0.7969|0.7763|0.6911|0.6433|0.8547|0.8750|0.8838|0.6234|0.8489|0.6234|0.8489|0.7121|0.8786|0.8727|0.7736|0.7888|0.4984|0.7694|0.7776|0.8265|0.7616|
 
 ##### Training Details
 **model_A**
@@ -37,15 +39,16 @@
 |model_B|https://pan.baidu.com/s/1i4QEVRZ|v9ua|
 
 ##### Tasks
-* ohem
+* ~~ohem (I have tried several methods, but have no effect. The **map** in all the methods have dropped.)~~
+* ~~position sensitive score map + global roi pooling class.~~
 * code refactor
 
 ##### References:
-> [tf-faster-rcnn](https://github.com/endernewton/tf-faster-rcnn)
+1 [tf-faster-rcnn](https://github.com/endernewton/tf-faster-rcnn)
 
-> [tensorflow-object-detection](https://github.com/tensorflow/models/tree/master/research/object_detection)
+2 [tensorflow-object-detection](https://github.com/tensorflow/models/tree/master/research/object_detection)
 
-> [R-FCN: Object Detection via
+3 [R-FCN: Object Detection via
 Region-based Fully Convolutional Networks](https://arxiv.org/pdf/1605.06409.pdf)
 
-> [An Implementation of Faster RCNN with Study for Region Sampling](https://arxiv.org/pdf/1702.02138.pdf)
+4 [An Implementation of Faster RCNN with Study for Region Sampling](https://arxiv.org/pdf/1702.02138.pdf)

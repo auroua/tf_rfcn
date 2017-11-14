@@ -340,7 +340,8 @@ class resnetv1(Network):
         self._predictions["rpn_cls_score_reshape"] = rpn_cls_score_reshape
         self._predictions["rpn_cls_prob"] = rpn_cls_prob
         self._predictions["rpn_bbox_pred"] = rpn_bbox_pred
-        self._predictions["roi_scores"] = roi_scores
+        if is_training:
+            self._predictions["roi_scores"] = roi_scores
     self._predictions["rois"] = rois
     self._predictions["rois_shape"] = tf.shape(rois)
     self._predictions["cls_score"] = position_sensitive_classes

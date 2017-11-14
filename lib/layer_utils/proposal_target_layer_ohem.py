@@ -138,4 +138,7 @@ def _sample_rois(all_rois, all_scores, gt_boxes, num_classes):
   bbox_targets, bbox_inside_weights = \
     _get_bbox_regression_labels(bbox_target_data, num_classes)
 
+  assert labels.shape[0] == rois.shape[0] == bbox_targets.shape[0] == bbox_inside_weights.shape[0], \
+    'dimensions not equal in file proposal_target_layer_ohem.py'
+
   return labels, rois, roi_scores, bbox_targets, bbox_inside_weights

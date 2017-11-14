@@ -185,8 +185,8 @@ class resnetv1(Network):
       blocks = [
           resnet_v1_block('block1', base_depth=64, num_units=3, stride=2),
           resnet_v1_block('block2', base_depth=128, num_units=4, stride=2),
-          resnet_v1_block('block3', base_depth=256, num_units=6, stride=2),
-          resnet_v1_block('block4', base_depth=512, num_units=3, stride=1),
+          resnet_v1_block('block3', base_depth=256, num_units=6, stride=1),
+          resnet_v1_block_hole('block4', base_depth=512, num_units=3, stride=1),
       ]
     elif self._num_layers == 101:
       blocks = [
@@ -266,6 +266,7 @@ class resnetv1(Network):
         with tf.control_dependencies([rpn_labels]):
           if cfg.TRAIN.OHEM:
             rois, _ = self._proposal_target_layer_ohem(rois, roi_scores, "rpn_rois")
+            # rois, _ = self._proposal_target_layer(rois, roi_scores, "rpn_rois")
           else:
             rois, _ = self._proposal_target_layer(rois, roi_scores, "rpn_rois")
       else:
@@ -275,7 +276,6 @@ class resnetv1(Network):
           rois, _ = self._proposal_top_layer(rpn_cls_prob, rpn_bbox_pred, "rois")
         else:
           raise NotImplementedError
-
       # rfcn   a 1024 1*1 conv layer
       rfcn_net = slim.conv2d(net_conv4, 1024, [1, 1], padding='SAME',
                              weights_initializer=tf.random_normal_initializer(stddev=0.01),
@@ -284,10 +284,10 @@ class resnetv1(Network):
                              # weights_regularizer=slim.l2_regularizer(scale=0.0005), scope='reduce_depth',
                             activation_fn=tf.nn.relu)
       # generate k*k*(C+1) score maps
-      rfcn_net_classes = slim.conv2d(rfcn_net, cfg.K*cfg.K*(20+1), [1, 1], weights_initializer=tf.random_normal_initializer(stddev=0.01),
+      rfcn_net_classes = slim.conv2d(rfcn_net, cfg.K*cfg.K*cfg.CLASSES, [1, 1], weights_initializer=tf.random_normal_initializer(stddev=0.01),
                              weights_regularizer=slim.l2_regularizer(scale=0.0005), scope='refined_classes',
                              activation_fn=None)
-      rfcn_net_bbox = slim.conv2d(rfcn_net, cfg.K*cfg.K*4*21, [1, 1], weights_regularizer=slim.l2_regularizer(scale=0.0005),
+      rfcn_net_bbox = slim.conv2d(rfcn_net, cfg.K*cfg.K*4*cfg.CLASSES, [1, 1], weights_regularizer=slim.l2_regularizer(scale=0.0005),
                                   weights_initializer=tf.random_normal_initializer(stddev=0.01), scope='refined_bbox',
                                   activation_fn=None)
 
@@ -306,7 +306,7 @@ class resnetv1(Network):
               position_sensitive_boxes.append(tf.stack(box_coordinates, axis=1))
 
       # class with background
-      feature_class_split = tf.split(rfcn_net_classes, num_or_size_splits=9, axis=3)
+      feature_class_split = tf.split(rfcn_net_classes, num_or_size_splits=cfg.K*cfg.K, axis=3)
 
       image_crops = []
       for (split, box) in zip(feature_class_split, position_sensitive_boxes):
@@ -318,7 +318,7 @@ class resnetv1(Network):
 
       # bounding box features
       bbox_target_crops = []
-      feature_bbox_split = tf.split(rfcn_net_bbox, num_or_size_splits=9, axis=3)
+      feature_bbox_split = tf.split(rfcn_net_bbox, num_or_size_splits=cfg.K*cfg.K, axis=3)
       for (split, box) in zip(feature_bbox_split, position_sensitive_boxes):
           crop = tf.image.crop_and_resize(split, box, tf.to_int32(box_ind), [6, 6])
           bbox_target_crops.append(crop)

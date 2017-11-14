@@ -224,8 +224,6 @@ class SolverWrapper(object):
         # Compute the graph with summary
         rpn_loss_cls, rpn_loss_box, loss_cls, loss_box, total_loss, summary = \
           self.net.train_step_with_summary(sess, blobs, train_op)
-        # rpn_loss_cls, rpn_loss_box, loss_cls, loss_box, center_loss, total_loss, summary = \
-        #   self.net.train_step_with_summary_center(sess, blobs, train_op)
 
         # self.writer.flush()
         self.writer.add_summary(summary, float(iter))
@@ -247,9 +245,6 @@ class SolverWrapper(object):
         print('iter: %d / %d, total loss: %.6f\n >>> rpn_loss_cls: %.6f\n '
               '>>> rpn_loss_box: %.6f\n >>> loss_cls: %.6f\n >>> loss_box: %.6f\n >>> lr: %f' % \
               (iter, max_iters, total_loss, rpn_loss_cls, rpn_loss_box, loss_cls, loss_box, lr.eval()))
-        # print('iter: %d / %d, total loss: %.6f\n >>> rpn_loss_cls: %.6f\n '
-        #       '>>> rpn_loss_box: %.6f\n >>> loss_cls: %.6f\n >>> loss_box: %.6f\n >>> center_loss: %.6f\n >>> lr: %f' % \
-        #       (iter, max_iters, total_loss, rpn_loss_cls, rpn_loss_box, loss_cls, loss_box, center_loss, lr.eval()))
         print('speed: {:.3f}s / iter'.format(timer.average_time))
 
 

@@ -8,8 +8,7 @@ if __name__ == '__main__':
     #             'trainval/default/res101_faster_rcnn_iter_10.ckpt'
     # ckpt_path = '/home/aurora/workspaces/PycharmProjects/tensorflow/tf_rfcn/output/res101/voc_2007_trainval+voc_2012_' \
     #             'trainval/default/res101_faster_rcnn_iter_400000.ckpt'
-    ckpt_path = '/home/aurora/workspaces/PycharmProjects/tensorflow/tf_rfcn/output/res101/voc_2007_trainval+voc_2012_' \
-                'trainval/default/res101_faster_rcnn_iter_20000.ckpt'
+    ckpt_path = '/home/aurora/pretrained_models/tensorflow_backbone_network/resnet_v1_50.ckpt'
     try:
         reader = pywrap_tensorflow.NewCheckpointReader(ckpt_path)
         var_to_shape_map = reader.get_variable_to_shape_map()

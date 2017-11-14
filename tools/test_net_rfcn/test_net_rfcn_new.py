@@ -18,8 +18,7 @@ from tensorflow.python import pywrap_tensorflow
 
 import tensorflow as tf
 from nets.vgg16 import vgg16
-from nets.resnet_v1_rfcn_hole_iterator4 import resnetv1
-# from nets.resnet_v1_rfcn_hole_iter4_test import resnetv1
+from nets.resnet_v1_rfcn_hole import resnetv1
 from nets.mobilenet_v1 import mobilenetv1
 
 def parse_args():
@@ -106,20 +105,14 @@ if __name__ == '__main__':
     raise NotImplementedError
 
   # load model
-  # with tf.variable_scope('rpn_network'):
-  net.create_architecture(sess, "TEST", imdb.num_classes, tag='default', scope='rpn_network',
-                          anchor_scales=cfg.ANCHOR_SCALES,
-                          anchor_ratios=cfg.ANCHOR_RATIOS)
+  with tf.variable_scope('rpn_network'):
+    net.create_architecture(sess, "TEST", imdb.num_classes, tag='default',
+                            anchor_scales=cfg.ANCHOR_SCALES,
+                            anchor_ratios=cfg.ANCHOR_RATIOS)
+
   global_var_map = {}
-  # print('#######'*30)
-  # count = 0
   for var in tf.global_variables():
-      # if 'rpn_network/resnet_v1_101/block2/unit_1' in var.op.name:
-      #   print(var.op.name)
-      #   count += 1
         global_var_map[var.op.name] = var
-  # print('#######' * 30)
-  # print(count)
 
 
   if args.model:
