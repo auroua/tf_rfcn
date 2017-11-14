@@ -40,6 +40,7 @@
 
 ##### Tasks
 * ~~ohem (I have tried several methods, but have no effect. The **map** in all the methods have dropped.)~~
+* ~~focal loss (The focal loss also have no effect.)~~
 * ~~position sensitive score map + global roi pooling class.~~
 * code refactor
 
