@@ -19,6 +19,9 @@ import tensorflow as tf
 from nets.vgg16 import vgg16
 # from nets.resnet_v1_rfcn_hole import resnetv1
 from nets.resnet_v1_rfcn_hole_local_global import resnetv1
+# from nets.resnet_v1_rfcn_hole_local_global_without_bbox import resnetv1
+# from nets.resnet_v1_rfcn_hole_local_global_without_context import resnetv1
+from nets.resnet_v1_rfcn_hole_local_global_elements_wise import resnetv1
 from nets.mobilenet_v1 import mobilenetv1
 
 def parse_args():
