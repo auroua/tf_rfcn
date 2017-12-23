@@ -49,9 +49,9 @@
     * modify the `--weight` parameter which is the pretrained model weights file.
     * modify the `--net` which is the net architecture you want to use.
 2. some other modifies:
-    * You can modify the `loss function` as you requirement in line [network.py#L646](https://github.com/auroua/tf_rfcn/blob/13a0892e67e474fae158ed7c0de69bf813b2ed74/lib/nets/network.py#L646)
-    * You can modify the `RFCN` architecture in line [resnet_v1_rfcn_hole.py#L279](https://github.com/auroua/tf_rfcn/blob/13a0892e67e474fae158ed7c0de69bf813b2ed74/lib/nets/resnet_v1_rfcn_hole.py#L279)_
-    * You'd better using the `resnet_v1_rfcn_hole.py` and `network.py` file.
+    * you can modify the `loss function` as you requirement in line [network.py#L646](https://github.com/auroua/tf_rfcn/blob/13a0892e67e474fae158ed7c0de69bf813b2ed74/lib/nets/network.py#L646)
+    * you can modify the `RFCN` architecture in line [resnet_v1_rfcn_hole.py#L279](https://github.com/auroua/tf_rfcn/blob/13a0892e67e474fae158ed7c0de69bf813b2ed74/lib/nets/resnet_v1_rfcn_hole.py#L279)_
+    * you'd better using the `resnet_v1_rfcn_hole.py` and `network.py` file.
 
 
 ##### References:
