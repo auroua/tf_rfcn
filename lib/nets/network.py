@@ -20,6 +20,8 @@ from layer_utils.proposal_top_layer import proposal_top_layer
 from layer_utils.anchor_target_layer import anchor_target_layer
 from layer_utils.proposal_target_layer import proposal_target_layer
 from layer_utils.proposal_target_layer_ohem import proposal_target_layer_ohem
+from layer_utils.generate_anchors_tf import generate_anchors_pre_tf
+from layer_utils.proposal_layer_tf import proposal_layer_tf
 
 from model.config import cfg
 
@@ -151,7 +153,8 @@ class Network(object):
         [rpn_cls_score, self._gt_boxes, self._im_info, self._feat_stride, self._anchors, self._num_anchors],
         [tf.float32, tf.float32, tf.float32, tf.float32])
 
-      rpn_labels.set_shape([1, 1, None, None])
+      # rpn_labels.set_shape([1, 1, None, None])
+      rpn_labels.set_shape([1, None, None, 1])
       rpn_bbox_targets.set_shape([1, None, None, self._num_anchors * 4])
       rpn_bbox_inside_weights.set_shape([1, None, None, self._num_anchors * 4])
       rpn_bbox_outside_weights.set_shape([1, None, None, self._num_anchors * 4])
@@ -190,6 +193,14 @@ class Network(object):
 
       return rois, roi_scores
 
+
+  def _proposal_layer_tf(self, rpn_cls_prob, rpn_bbox_pred, name):
+    print('Use TF proposal layer')
+    with tf.variable_scope(name) as scope:
+      return proposal_layer_tf(rpn_cls_prob, rpn_bbox_pred, self._im_info,
+                               self._mode, self._anchors, self._num_anchors)
+
+
   def _proposal_target_layer_ohem(self, rois, roi_scores, name):
     with tf.variable_scope(name) as scope:
       rois, roi_scores, labels, bbox_targets, bbox_inside_weights, bbox_outside_weights = tf.py_func(
@@ -214,7 +225,6 @@ class Network(object):
 
       return rois, roi_scores
 
-
   def _anchor_component(self):
     with tf.variable_scope('ANCHOR_' + self._tag) as scope:
       # just to get the shape right
@@ -228,6 +238,17 @@ class Network(object):
       anchor_length.set_shape([])
       self._anchors = anchors
       self._anchor_length = anchor_length
+
+  def _anchor_component_tf(self):
+    print('Use TF anchors')
+    with tf.variable_scope('ANCHOR_' + self._tag) as scope:
+      # just to get the shape right
+      height = tf.to_int32(tf.ceil(self._im_info[0, 0] / np.float32(self._feat_stride[0])))
+      width = tf.to_int32(tf.ceil(self._im_info[0, 1] / np.float32(self._feat_stride[0])))
+
+      self._anchors, self._anchor_length = generate_anchors_pre_tf(
+        height, width, self._feat_stride[0], self._anchor_scales,
+        self._anchor_ratios)
 
   def build_network(self, sess, is_training=True):
     raise NotImplementedError
@@ -255,13 +276,7 @@ class Network(object):
     smoothL1_sign = tf.stop_gradient(tf.to_float(tf.less(abs_in_box_diff, 1. / sigma_2)))
     in_loss_box = tf.pow(in_box_diff, 2) * (sigma_2 / 2.) * smoothL1_sign \
                   + (abs_in_box_diff - (0.5 / sigma_2)) * (1. - smoothL1_sign)
-    # in_loss_box = in_box_diff**2 * (sigma_2 / 2.) * smoothL1_sign \
-    #               + (abs_in_box_diff - (0.5 / sigma_2)) * (1. - smoothL1_sign)
     out_loss_box = bbox_outside_weights * in_loss_box
-    # loss_box = tf.reduce_mean(tf.reduce_sum(
-    #   out_loss_box,
-    #   axis=dim
-    # ))
     loss_box = tf.reduce_mean(out_loss_box, axis=1)
     loss_box = tf.Print(loss_box, [tf.shape(bbox_pred), tf.shape(bbox_targets), tf.shape(bbox_inside_weights),
                                    tf.shape(box_diff), tf.shape(in_box_diff), tf.shape(smoothL1_sign)], 'smooth l1 loss outputs')
@@ -593,9 +608,13 @@ class Network(object):
     return loss
 
   def create_architecture(self, sess, mode, num_classes, tag=None,
-                          anchor_scales=(8, 16, 32), anchor_ratios=(0.5, 1, 2)):
-    self._image = tf.placeholder(tf.float32, shape=[self._batch_size, None, None, 3])
-    self._im_info = tf.placeholder(tf.float32, shape=[self._batch_size, 3])
+                          anchor_scales=(8, 16, 32), anchor_ratios=(0.5, 1, 2), image=None, im_info=None):
+    if image is not None and im_info is not None:
+      self._image = image
+      self._im_info = im_info
+    else:
+      self._image = tf.placeholder(tf.float32, shape=[self._batch_size, None, None, 3])
+      self._im_info = tf.placeholder(tf.float32, shape=[self._batch_size, 3])
     self._gt_boxes = tf.placeholder(tf.float32, shape=[None, 5])
     self._tag = tag
 

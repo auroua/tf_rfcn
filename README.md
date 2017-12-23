@@ -42,6 +42,18 @@
 * ~~position sensitive score map + global roi pooling class.~~
 * code refactor
 
+##### Training Pipline
+1. running `tools/trainval_net_rfcn.py` file.
+    * modify the net you want to use in line [import nets](https://github.com/auroua/tf_rfcn/blob/13a0892e67e474fae158ed7c0de69bf813b2ed74/tools/trainval_net_rfcn.py#L19), the nets provied by this project is in floder `lib/nets`.
+    * modify the --cfg parameter which is the config file you want to use. Some config file can be find in file `experiments/cfgs`.
+    * modify the --weight parameter which is the pretrained model weights file.
+    * modify the --net which is the net architecture you want to use.
+2. some other modifies:
+    * You can modify the loss function as you requirement in line [network.py#L646](https://github.com/auroua/tf_rfcn/blob/13a0892e67e474fae158ed7c0de69bf813b2ed74/lib/nets/network.py#L646)
+    * You can modify the `RFCN` architecture in line [resnet_v1_rfcn_hole.py#L279](https://github.com/auroua/tf_rfcn/blob/13a0892e67e474fae158ed7c0de69bf813b2ed74/lib/nets/resnet_v1_rfcn_hole.py#L279)_
+    * You'd better to use the `resnet_v1_rfcn_hole.py` and `network.py` file.
+
+
 ##### References:
 1 [tf-faster-rcnn](https://github.com/endernewton/tf-faster-rcnn)
 
